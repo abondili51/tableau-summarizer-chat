@@ -52,6 +52,13 @@ function ChatInterface({
     try {
       const { sendChatQuery } = await import('../services/ChatService');
       
+      console.log('Sending chat query...', {
+        question: inputValue,
+        datasourceId,
+        hasToken: !!accessToken,
+        sessionId
+      });
+      
       const response = await sendChatQuery({
         question: inputValue,
         datasourceId: datasourceId,
@@ -60,10 +67,17 @@ function ChatInterface({
         summaryContext: summaryContext
       });
 
+      console.log('Received chat response:', response);
+
+      // Ensure we have a valid answer
+      if (!response || typeof response.answer !== 'string') {
+        throw new Error('Invalid response format from chat agent');
+      }
+
       const assistantMessage = {
         id: Date.now() + 1,
         role: 'assistant',
-        content: response.answer,
+        content: response.answer || 'No response received',
         timestamp: new Date(),
         metadata: {
           status: response.status,
@@ -73,8 +87,10 @@ function ChatInterface({
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+      setError(null); // Clear any previous errors
     } catch (err) {
       console.error('Chat error:', err);
+      console.error('Error details:', err.stack);
       setError(err.message || 'Failed to get response');
       
       // If auth error, trigger auth flow
@@ -178,7 +194,22 @@ function ChatInterface({
                 >
                   {message.role === 'assistant' ? (
                     <div className="prose prose-sm max-w-none">
-                      <ReactMarkdown>{message.content}</ReactMarkdown>
+                      {message.content ? (
+                        <ReactMarkdown
+                          components={{
+                            // Override code blocks to prevent rendering issues
+                            code: ({node, inline, className, children, ...props}) => (
+                              inline ? 
+                                <code className="bg-gray-200 px-1 rounded text-xs" {...props}>{children}</code> :
+                                <pre className="bg-gray-800 text-white p-2 rounded overflow-x-auto"><code {...props}>{children}</code></pre>
+                            )
+                          }}
+                        >
+                          {String(message.content)}
+                        </ReactMarkdown>
+                      ) : (
+                        <p className="text-gray-500 italic">Empty response</p>
+                      )}
                       {message.metadata?.executionTime && (
                         <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-500">
                           Execution time: {message.metadata.executionTime.toFixed(2)}s
@@ -186,7 +217,7 @@ function ChatInterface({
                       )}
                     </div>
                   ) : (
-                    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    <p className="text-sm whitespace-pre-wrap">{message.content || '(empty message)'}</p>
                   )}
                 </div>
               </div>

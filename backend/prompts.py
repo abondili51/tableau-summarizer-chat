@@ -8,7 +8,7 @@ DEFAULT_MAX_ROWS = 50
 DEFAULT_MAX_FIELDS = 15
 
 
-def build_summarization_prompt(sheets_data, metadata, datasources, user_context):
+def build_summarization_prompt(sheets_data, metadata, datasources, user_context, custom_system_prompt=None):
     """
     Constructs the prompt sent to Gemini for summarization
     
@@ -16,15 +16,19 @@ def build_summarization_prompt(sheets_data, metadata, datasources, user_context)
         sheets_data: List of sheet data objects with rows and columns
         metadata: Dashboard metadata (title, filters, etc.)
         datasources: List of datasource metadata objects with field definitions
-        user_context: Optional business context from author
+        user_context: Optional business context from user
+        custom_system_prompt: Optional custom system prompt from author (overrides default)
     
     Returns:
         Formatted prompt string
     """
     prompt_parts = []
     
-    # System instruction
-    prompt_parts.append(get_system_instruction())
+    # System instruction (use custom if provided and not empty, otherwise default)
+    if custom_system_prompt and custom_system_prompt.strip():
+        prompt_parts.append(custom_system_prompt)
+    else:
+        prompt_parts.append(get_system_instruction())
     
     # Dashboard metadata
     prompt_parts.append("\n## Dashboard Context")
@@ -61,14 +65,14 @@ def get_system_instruction():
     Returns the system instruction for the AI model
     Defines the role, focus areas, and output format
     """
-    return """You are a business intelligence analyst. Analyze this Tableau dashboard and provide a concise, actionable summary.
+    return """You are a business intelligence analyst. Analyze this Tableau dashboard and provide a concise, executive-ready summary in less than 200 words.
 
 Focus on:
-- Key trends and patterns
-- Notable insights or anomalies
+- Key trends and patterns (include specific numeric values when relevant)
+- Notable insights or anomalies (highlight positive/negative changes with actual numbers)
 - Use field definitions and descriptions to provide context-aware interpretations
 
-Format: Follow any instructions in Business Context section, otherwise use clear bullet points. Be concise and business-friendly."""
+Format: Follow any instructions in Business Context section, otherwise use clear bullet points. Be concise and business-friendly. Include specific numbers and percentages where applicable for clarity."""
 
 
 def format_sheet_data(sheet, max_rows=DEFAULT_MAX_ROWS):

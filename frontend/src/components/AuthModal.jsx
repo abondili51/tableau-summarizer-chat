@@ -17,8 +17,20 @@ function AuthModal({ isOpen, onClose, onAuthenticated, serverUrl, siteContentUrl
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   
+  // Server fields
+  const [manualServerUrl, setManualServerUrl] = useState('');
+  const [manualSiteContentUrl, setManualSiteContentUrl] = useState('');
+  
   // Common fields
   const [skipSslVerification, setSkipSslVerification] = useState(false);
+
+  // Initialize manual fields with provided values or empty
+  React.useEffect(() => {
+    if (isOpen) {
+      setManualServerUrl(serverUrl || '');
+      setManualSiteContentUrl(siteContentUrl || '');
+    }
+  }, [isOpen, serverUrl, siteContentUrl]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -57,10 +69,18 @@ function AuthModal({ isOpen, onClose, onAuthenticated, serverUrl, siteContentUrl
           throw new Error('Unsupported authentication method');
       }
       
+      // Use manual server URL if provided, otherwise use detected one
+      const finalServerUrl = manualServerUrl.trim() || serverUrl;
+      const finalSiteContentUrl = manualSiteContentUrl.trim();
+      
+      if (!finalServerUrl) {
+        throw new Error('Server URL is required. Please enter your Tableau Server URL.');
+      }
+      
       const result = await authenticateChatAgent({
         authMethod,
-        serverUrl: serverUrl || window.location.origin,
-        siteContentUrl: siteContentUrl || '',
+        serverUrl: finalServerUrl,
+        siteContentUrl: finalSiteContentUrl,
         authData
       });
       
@@ -205,16 +225,52 @@ function AuthModal({ isOpen, onClose, onAuthenticated, serverUrl, siteContentUrl
             </>
           )}
 
-          {/* Server Info Display */}
-          <div className="bg-gray-50 rounded-lg p-3 text-sm">
-            <p className="text-gray-600">
-              <span className="font-medium">Server:</span> {serverUrl || 'Not detected'}
-            </p>
-            {siteContentUrl && (
-              <p className="text-gray-600 mt-1">
-                <span className="font-medium">Site:</span> {siteContentUrl}
-              </p>
-            )}
+          {/* Server Configuration */}
+          <div className="border border-gray-300 rounded-lg p-4 bg-gray-50">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Tableau Server Configuration
+            </label>
+            
+            <div className="space-y-3">
+              {/* Server URL */}
+              <div>
+                <label htmlFor="serverUrl" className="block text-xs font-medium text-gray-600 mb-1">
+                  Server URL {!serverUrl && <span className="text-red-600">*</span>}
+                </label>
+                <input
+                  id="serverUrl"
+                  type="text"
+                  value={manualServerUrl}
+                  onChange={(e) => setManualServerUrl(e.target.value)}
+                  placeholder={serverUrl ? "Using detected URL" : "https://your-server.com"}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-tableau-blue focus:border-transparent text-sm"
+                  required={!serverUrl}
+                />
+                {!serverUrl && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    ⚠️ Server URL not auto-detected. Please enter your Tableau Server URL.
+                  </p>
+                )}
+              </div>
+              
+              {/* Site Content URL */}
+              <div>
+                <label htmlFor="siteUrl" className="block text-xs font-medium text-gray-600 mb-1">
+                  Site Content URL (optional)
+                </label>
+                <input
+                  id="siteUrl"
+                  type="text"
+                  value={manualSiteContentUrl}
+                  onChange={(e) => setManualSiteContentUrl(e.target.value)}
+                  placeholder={siteContentUrl ? "Using detected site" : "Leave empty for default site"}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-tableau-blue focus:border-transparent text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Leave empty for default site, or enter your site name (e.g., "mysite")
+                </p>
+              </div>
+            </div>
           </div>
 
           {/* SSL Verification Toggle */}

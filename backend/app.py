@@ -103,6 +103,7 @@ class SummarizeRequest(BaseModel):
     metadata: Metadata
     datasources: Optional[List[DatasourceInfo]] = []
     context: Optional[str] = ""
+    system_prompt: Optional[str] = None
 
 class SummarizeResponse(BaseModel):
     success: bool
@@ -149,9 +150,11 @@ async def summarize(request: SummarizeRequest):
         metadata = request.metadata.dict()
         datasources = [ds.dict() for ds in request.datasources] if request.datasources else []
         user_context = request.context or ''
+        system_prompt = request.system_prompt
         
         # Build comprehensive prompt
-        prompt = build_summarization_prompt(sheets_data, metadata, datasources, user_context)
+        prompt = build_summarization_prompt(sheets_data, metadata, datasources, user_context, system_prompt)
+        
         print(prompt)
         
         # Configure generation parameters for faster response
@@ -205,8 +208,9 @@ async def test_prompt(request: SummarizeRequest):
         metadata = request.metadata.dict()
         datasources = [ds.dict() for ds in request.datasources] if request.datasources else []
         user_context = request.context or ''
+        system_prompt = request.system_prompt
         
-        prompt = build_summarization_prompt(sheets_data, metadata, datasources, user_context)
+        prompt = build_summarization_prompt(sheets_data, metadata, datasources, user_context, system_prompt)
         
         return TestPromptResponse(
             success=True,
@@ -218,6 +222,6 @@ async def test_prompt(request: SummarizeRequest):
 
 if __name__ == '__main__':
     import uvicorn
-    port = int(os.environ.get('PORT', 8000))
+    port = int(os.environ.get('PORT', 8001))
     uvicorn.run(app, host='0.0.0.0', port=port)
 

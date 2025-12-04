@@ -4,8 +4,8 @@
  */
 
 // Backend API URLs
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const CHAT_AGENT_URL = import.meta.env.VITE_CHAT_AGENT_URL || 'http://localhost:8001';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+const CHAT_AGENT_URL = import.meta.env.VITE_CHAT_AGENT_URL || 'http://localhost:8000';
 
 /**
  * Authenticate with the chat agent using PAT or standard credentials
@@ -26,18 +26,18 @@ export async function authenticateChatAgent(credentials) {
     
     switch (authMethod) {
       case 'pat':
-        endpoint = '/api/v1/auth/pat/login';
+        endpoint = '/api/v1/auth/pat';
         payload = {
           pat_name: authData.patName,
           pat_secret: authData.patSecret,
-          site_content_url: siteContentUrl,
+          site_content_url: siteContentUrl || '',
           server_url: serverUrl,
           skip_ssl_verification: authData.skipSslVerification || false
         };
         break;
         
       case 'standard':
-        endpoint = '/api/v1/auth/standard/login';
+        endpoint = '/api/v1/auth/login';
         payload = {
           username: authData.username,
           password: authData.password,
@@ -133,6 +133,9 @@ export async function sendChatQuery(params) {
       };
     }
     
+    console.log('Sending payload to chat agent:', payload);
+    console.log('Chat agent URL:', `${CHAT_AGENT_URL}/api/v1/agent/query`);
+    
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
     
@@ -150,17 +153,32 @@ export async function sendChatQuery(params) {
     
     const data = await response.json();
     
+    console.log('Chat agent response status:', response.status);
+    console.log('Chat agent response data:', data);
+    
     if (!response.ok) {
-      throw new Error(data.detail || 'Query failed');
+      // For 422 validation errors, show detailed field errors
+      if (response.status === 422 && data.detail) {
+        console.error('Validation error details:', data.detail);
+        // Format validation errors for display
+        if (Array.isArray(data.detail)) {
+          const errors = data.detail.map(err => 
+            `${err.loc?.join('.')} - ${err.msg}`
+          ).join('; ');
+          throw new Error(`Validation error: ${errors}`);
+        }
+      }
+      throw new Error(data.detail || data.error || data.message || 'Query failed');
     }
     
+    // Handle the response - the backend returns the data directly without a wrapper
     return {
-      answer: data.answer,
-      status: data.status,
+      answer: data.answer || 'No answer received',
+      status: data.status || 'unknown',
       reasoningProcess: data.reasoning_process || [],
       queryMetadata: data.query_metadata || {},
-      conversationId: data.conversation_id,
-      executionTime: data.execution_time_seconds
+      conversationId: data.conversation_id || null,
+      executionTime: data.execution_time_seconds || 0
     };
   } catch (error) {
     console.error('Chat query error:', error);

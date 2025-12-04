@@ -388,8 +388,12 @@ export function getTableauServerInfo() {
     // Get environment information
     const environment = tableau.extensions.environment;
     
+    // For Tableau Server/Cloud, tableauServerUrl should be populated
+    // For Tableau Desktop, it may be empty, so we return null and let the user enter it manually
+    const serverUrl = environment.tableauServerUrl || null;
+    
     return {
-      serverUrl: environment.tableauServerUrl || window.location.origin,
+      serverUrl: serverUrl,
       siteContentUrl: environment.siteContentUrl || '',
       siteId: environment.siteId || '',
       mode: environment.mode, // 'authoring' or 'viewing'
@@ -398,7 +402,7 @@ export function getTableauServerInfo() {
   } catch (error) {
     console.error('Error getting Tableau server info:', error);
     return {
-      serverUrl: window.location.origin,
+      serverUrl: null,
       siteContentUrl: '',
       siteId: '',
       mode: 'unknown',

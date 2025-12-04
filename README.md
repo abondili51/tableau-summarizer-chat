@@ -7,7 +7,8 @@ AI-powered Tableau dashboard extension that generates business insights using Go
 ### Summary Mode
 - 🎯 **Multi-Sheet Selection**: Choose one or more sheets from your dashboard to analyze
 - 🤖 **AI-Powered Insights**: Leverage Google Gemini to generate actionable business summaries
-- 📝 **Custom Context**: Add business context to guide AI analysis
+- 📝 **Custom Context**: Add business context to guide AI analysis (available to all users)
+- 🔧 **Custom System Prompt**: Authors can customize the AI's core instructions (author-only)
 - 🔄 **Auto-Refresh**: Automatically update summary when filters change
 - 📊 **Metadata Integration**: Includes dashboard filters, titles, and active selections
 - 💾 **Export Options**: Copy to clipboard or download as text file
@@ -201,24 +202,43 @@ For production, update to your backend API URLs.
 
 1. **Open Dashboard**: Open your Tableau dashboard with the extension added
 
-2. **Select Sheets**: Choose one or more sheets to analyze from the dropdown
+2. **Configure System Prompt** (Authors Only): Workbook authors can customize how the AI analyzes data:
+   - Click to expand the "AI System Prompt (Author-Only)" section
+   - Define the AI's role, focus areas, and output format
+   - Settings auto-save and apply to all users viewing the dashboard
+   - Example: "You are a financial analyst. Focus on profitability metrics and trends. Use a formal executive summary format."
 
-3. **Add Context** (Optional): Provide business context or specific instructions like:
+3. **Select Sheets**: Choose one or more sheets to analyze from the dropdown
+
+4. **Add Context** (Optional - All Users): Provide specific business context like:
    - "Focus on year-over-year growth trends"
    - "Identify underperforming products"
    - "Highlight key metrics for executive summary"
 
-4. **Generate Summary**: Click "Generate Summary" button
+5. **Generate Summary**: Click "Generate Summary" button
 
-5. **Review Insights**: AI-generated summary appears with:
+6. **Review Insights**: AI-generated summary appears with:
    - Key trends and patterns
    - Notable insights or anomalies
    - Business implications
    - Recommended actions
 
-6. **Auto-Refresh**: Enable auto-refresh to update summary when filters change
+7. **Auto-Refresh**: Enable auto-refresh to update summary when filters change
 
-7. **Export**: Copy to clipboard or download as text file
+8. **Export**: Copy to clipboard or download as text file
+
+### Role-Based Access Control
+
+**System Prompt (Author-Only)**:
+- Workbook authors can customize the core AI instructions that control how data is analyzed
+- This system prompt is only visible and editable when authoring/editing the dashboard
+- Settings are saved and automatically applied for all viewers
+- Viewers see consistent, professionally formatted insights based on author's configuration
+
+**Business Context (All Users)**:
+- Both authors and viewers can add specific business context to guide individual analyses
+- This supplements the system prompt with situation-specific instructions
+- Useful for one-time or filter-specific insights
 
 ### Chat Mode
 
@@ -277,7 +297,8 @@ For production, update to your backend API URLs.
       {"field": "Region", "value": "East", "type": "categorical"}
     ]
   },
-  "context": "Focus on top performing products"
+  "context": "Focus on top performing products",
+  "system_prompt": "You are a business intelligence analyst. Analyze this data and provide executive insights." 
 }
 ```
 

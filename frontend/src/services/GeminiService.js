@@ -4,7 +4,7 @@
  */
 
 // Backend API URL - configure based on deployment
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
 
 /**
  * Generate summary using Google Gemini via Vertex AI

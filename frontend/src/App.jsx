@@ -4,9 +4,19 @@ import ContextInput from './components/ContextInput';
 import SummaryPanel from './components/SummaryPanel';
 import ChatInterface from './components/ChatInterface';
 import AuthModal from './components/AuthModal';
-import { initializeTableau, getSheets, extractSheetData, getDashboardMetadata, getDatasourceMetadata, subscribeToFilterChanges, subscribeToParameterChanges, getTableauServerInfo, getPrimaryDatasourceId, getAllDatasources } from './services/TableauConnector';
+import { initializeTableau, getSheets, extractSheetData, getDashboardMetadata, getDatasourceMetadata, subscribeToFilterChanges, subscribeToParameterChanges, getTableauServerInfo, getPrimaryDatasourceId, getAllDatasources, saveSettings, loadSettings } from './services/TableauConnector';
 import { generateSummary } from './services/GeminiService';
 import { getStoredAuthCredentials } from './services/ChatService';
+
+// Default system prompt (matches backend's get_system_instruction())
+const DEFAULT_SYSTEM_PROMPT = `You are a business intelligence analyst. Analyze this Tableau dashboard and provide a concise, executive-ready summary in less than 200 words.
+
+Focus on:
+- Key trends and patterns
+- Notable insights or anomalies
+- Use field definitions and descriptions to provide context-aware interpretations
+
+Format: Follow any instructions in Business Context section, otherwise use clear bullet points. Be concise and business-friendly.`;
 
 function App() {
   // State management
@@ -14,12 +24,14 @@ function App() {
   const [sheets, setSheets] = useState([]);
   const [selectedSheets, setSelectedSheets] = useState([]);
   const [context, setContext] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState('');
   const [summary, setSummary] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
   
   // Chat mode state
   const [mode, setMode] = useState('summary'); // 'summary' or 'chat'
@@ -45,6 +57,27 @@ function App() {
       };
     }
   }, [isInitialized, autoRefresh, selectedSheets, summary]);
+
+  // Auto-save system prompt when author changes it
+  useEffect(() => {
+    if (isInitialized && serverInfo?.mode === 'authoring') {
+      setSavingSettings(true);
+      const timeoutId = setTimeout(async () => {
+        try {
+          await saveSettings({ systemPrompt });
+          setSavingSettings(false);
+        } catch (err) {
+          console.warn('Could not save system prompt:', err);
+          setSavingSettings(false);
+        }
+      }, 1000);
+
+      return () => {
+        clearTimeout(timeoutId);
+        setSavingSettings(false);
+      };
+    }
+  }, [systemPrompt, isInitialized, serverInfo]);
 
   /**
    * Initialize the Tableau extension and load available sheets
@@ -77,6 +110,21 @@ function App() {
         if (tokenAge < storedCreds.expiresIn * 1000) {
           setChatAccessToken(storedCreds.token);
         }
+      }
+      
+      // Load saved system prompt (author-configured)
+      try {
+        const savedSettings = loadSettings();
+        if (savedSettings && savedSettings.systemPrompt) {
+          setSystemPrompt(savedSettings.systemPrompt);
+        } else {
+          // Pre-populate with default on first load
+          setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
+        }
+      } catch (err) {
+        console.warn('Could not load saved settings:', err);
+        // Pre-populate with default on error
+        setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
       }
       
       setIsInitialized(true);
@@ -128,11 +176,13 @@ function App() {
       console.log('Datasource metadata collected:', datasources);
 
       // Call Gemini API through backend
+      // Send system_prompt only if it's not empty (backend will use default if null/empty)
       const result = await generateSummary({
         sheets_data: sheetsData,
         metadata: metadata,
         datasources: datasources,
-        context: context
+        context: context,
+        system_prompt: systemPrompt.trim() || undefined
       });
 
       setSummary(result.summary);
@@ -323,7 +373,57 @@ function App() {
                   disabled={!isInitialized || loading}
                 />
 
-                {/* Context Input */}
+                {/* System Prompt - Author Only */}
+                {serverInfo?.mode === 'authoring' && (
+                  <div className="border-l-4 border-purple-500 bg-purple-50 p-4 rounded-r-lg">
+                    <div className="flex items-start">
+                      <svg className="w-5 h-5 text-purple-600 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                      </svg>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <label htmlFor="system-prompt" className="text-sm font-medium text-purple-800">
+                            AI System Prompt (Author-Only)
+                          </label>
+                          <span className="px-2 py-0.5 bg-purple-200 text-purple-800 text-xs font-medium rounded">
+                            Advanced
+                          </span>
+                          {savingSettings && (
+                            <span className="flex items-center text-xs text-gray-600">
+                              <svg className="animate-spin h-3 w-3 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                              Saving...
+                            </span>
+                          )}
+                          {!savingSettings && systemPrompt && (
+                            <span className="flex items-center text-xs text-green-600">
+                              <svg className="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                              Saved
+                            </span>
+                          )}
+                        </div>
+                        <textarea
+                          id="system-prompt"
+                          value={systemPrompt}
+                          onChange={(e) => setSystemPrompt(e.target.value)}
+                          disabled={loading}
+                          rows={6}
+                          placeholder="Define how the AI should analyze your data. Example:&#10;&#10;You are a business intelligence analyst. Analyze this Tableau dashboard and provide a concise, executive-ready summary.&#10;&#10;Focus on:&#10;- Key trends and patterns&#10;- Notable insights or anomalies&#10;&#10;Format: Use clear bullet points. Be concise and business-friendly."
+                          className="w-full px-4 py-3 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed text-sm text-gray-900 placeholder-gray-400 resize-none font-mono"
+                        />
+                        <p className="text-xs text-purple-700 mt-2">
+                          This system prompt controls how the AI analyzes data for all users. Leave as-is to use default prompt.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Context Input - Available to All Users */}
                 <ContextInput
                   context={context}
                   onContextChange={setContext}

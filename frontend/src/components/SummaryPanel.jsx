@@ -93,18 +93,88 @@ function SummaryPanel({ summary, loading }) {
   };
 
   /**
-   * Render formatted line with bold text support
+   * Render formatted line with bold text support and colored negative numbers
    */
   const renderContent = (content) => {
-    // Simple bold text support: **text** -> <strong>text</strong>
+    // Split by bold text first: **text** -> <strong>text</strong>
     const parts = content.split(/(\*\*.*?\*\*)/g);
     
     return parts.map((part, idx) => {
       if (part.startsWith('**') && part.endsWith('**')) {
-        return <strong key={idx}>{part.slice(2, -2)}</strong>;
+        // Handle bold text - also check for negative numbers inside bold
+        const boldContent = part.slice(2, -2);
+        return <strong key={idx}>{colorizeNumbers(boldContent)}</strong>;
       }
-      return <span key={idx}>{part}</span>;
+      return <span key={idx}>{colorizeNumbers(part)}</span>;
     });
+  };
+
+  /**
+   * Colorize negative numbers in text (red for negatives, green for positive percentages)
+   * Handles various formats: -123, -$123, -123.45%, ($123), -123K, -123M, etc.
+   */
+  const colorizeNumbers = (text) => {
+    if (!text) return text;
+
+    // Regex to match numbers in various formats
+    // Matches: -$123, $123, -123.45%, 123%, (123), ($123), 123K, -45M, etc.
+    const numberPattern = /-?\$?\d+(?:,\d{3})*(?:\.\d+)?[KMB%]?|\(\$?\d+(?:,\d{3})*(?:\.\d+)?[KMB%]?\)/g;
+    
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = numberPattern.exec(text)) !== null) {
+      const numberStr = match[0];
+      const matchIndex = match.index;
+
+      // Add text before the number
+      if (matchIndex > lastIndex) {
+        parts.push(text.substring(lastIndex, matchIndex));
+      }
+
+      // Determine if the number is negative
+      // Check for: minus sign at start, or wrapped in parentheses
+      const hasMinusSign = numberStr.startsWith('-');
+      const isParenthetical = numberStr.startsWith('(') && numberStr.endsWith(')');
+      const isNegative = hasMinusSign || isParenthetical;
+
+      // Extract numeric value for additional checks
+      const cleanNumber = numberStr.replace(/[\$,()KMB%]/g, '');
+      const numericValue = parseFloat(cleanNumber);
+      
+      // Check if this specific number is a percentage
+      const isPercentage = numberStr.includes('%');
+
+      // Color the number based on its value
+      if (isNegative) {
+        // Negative numbers in red
+        parts.push(
+          <span key={`neg-${matchIndex}`} className="text-red-600 font-semibold">
+            {numberStr}
+          </span>
+        );
+      } else if (numericValue > 0 && isPercentage) {
+        // Positive percentages in green (optional feature)
+        parts.push(
+          <span key={`pos-${matchIndex}`} className="text-green-600 font-semibold">
+            {numberStr}
+          </span>
+        );
+      } else {
+        // Regular numbers remain unstyled
+        parts.push(numberStr);
+      }
+
+      lastIndex = matchIndex + numberStr.length;
+    }
+
+    // Add remaining text
+    if (lastIndex < text.length) {
+      parts.push(text.substring(lastIndex));
+    }
+
+    return parts.length > 0 ? parts : text;
   };
 
   const formattedContent = formatSummary(summary);
