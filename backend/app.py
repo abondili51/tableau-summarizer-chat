@@ -7,15 +7,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
-import vertexai
-try:
-    from vertexai.generative_models import GenerativeModel
-except ImportError:
-    from vertexai.preview.generative_models import GenerativeModel
 import os
 from datetime import datetime, timedelta
-import google.auth
-from google.auth.exceptions import DefaultCredentialsError
 import requests
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse, quote
@@ -25,7 +18,7 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Import prompt building functions
-from .prompts import build_summarization_prompt
+from prompts import build_summarization_prompt
 
 app = FastAPI(title="Tableau Summarizer API", version="1.0.0")
 
@@ -46,25 +39,43 @@ PROJECT_ID = os.environ.get('GOOGLE_CLOUD_PROJECT', '')
 LOCATION = os.environ.get('GOOGLE_CLOUD_LOCATION', 'us-central1')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
-# Initialize Vertex AI with Application Default Credentials or API key
-try:
-    if GEMINI_API_KEY:
-        # Use API key if provided (for backward compatibility)
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        USE_VERTEX_AI = False
-    else:
-        # Use Application Default Credentials with Vertex AI
-        credentials, project = google.auth.default()
-        if not PROJECT_ID:
-            PROJECT_ID = project
-        vertexai.init(project=PROJECT_ID, location=LOCATION)
-        USE_VERTEX_AI = True
-except DefaultCredentialsError:
-    USE_VERTEX_AI = None  # Will error on actual use
-except Exception as e:
-    print(f"Warning: Could not initialize AI client: {e}")
-    USE_VERTEX_AI = None
+# Lazy initialization variables
+USE_VERTEX_AI = None
+_vertex_initialized = False
+
+def initialize_vertex_ai():
+    """Initialize Vertex AI lazily when first needed"""
+    global USE_VERTEX_AI, _vertex_initialized, PROJECT_ID
+    
+    if _vertex_initialized:
+        return USE_VERTEX_AI
+        
+    try:
+        # Import Google Cloud libraries only when needed
+        import google.auth
+        from google.auth.exceptions import DefaultCredentialsError
+        import vertexai
+
+        if GEMINI_API_KEY:
+            # Use API key if provided (for backward compatibility)
+            import google.generativeai as genai
+            genai.configure(api_key=GEMINI_API_KEY)
+            USE_VERTEX_AI = False
+        else:
+            # Use Application Default Credentials with Vertex AI
+            credentials, project = google.auth.default()
+            if not PROJECT_ID:
+                PROJECT_ID = project
+            vertexai.init(project=PROJECT_ID, location=LOCATION)
+            USE_VERTEX_AI = True
+        _vertex_initialized = True
+        return USE_VERTEX_AI
+    except Exception as e:
+        # Catch both DefaultCredentialsError and any other exceptions
+        print(f"Warning: Could not initialize AI client: {e}")
+        USE_VERTEX_AI = None
+        _vertex_initialized = True
+        return None
 
 # Pydantic models for request/response validation
 class SheetData(BaseModel):
@@ -128,16 +139,15 @@ class HealthResponse(BaseModel):
     project_id: Optional[str] = None
     location: Optional[str] = None
 
-@app.get('/health', response_model=HealthResponse)
+@app.get('/health')
 async def health_check():
     """Health check endpoint"""
-    return HealthResponse(
-        status='healthy',
-        timestamp=datetime.now().isoformat(),
-        vertex_ai_configured=USE_VERTEX_AI is not None,
-        project_id=PROJECT_ID if USE_VERTEX_AI else None,
-        location=LOCATION if USE_VERTEX_AI else None
-    )
+    return {"status": "ok"}
+
+@app.get('/healthz')
+async def health_check_k8s():
+    """Health check endpoint for Kubernetes/Istio"""
+    return {"status": "ok"}
 
 @app.post('/api/summarize', response_model=SummarizeResponse)
 async def summarize(request: SummarizeRequest):
@@ -152,7 +162,9 @@ async def summarize(request: SummarizeRequest):
     print("SUMMARIZE ENDPOINT CALLED")
     print("=" * 50)
     try:
-        if USE_VERTEX_AI is None:
+        # Initialize Vertex AI lazily when first needed
+        vertex_ai_status = initialize_vertex_ai()
+        if vertex_ai_status is None:
             raise HTTPException(
                 status_code=500,
                 detail='Vertex AI not configured. Please set up Application Default Credentials or provide GEMINI_API_KEY'
@@ -179,7 +191,13 @@ async def summarize(request: SummarizeRequest):
         }
         
         # Call Gemini via Vertex AI or direct API
-        if USE_VERTEX_AI:
+        if vertex_ai_status:
+            # Import Vertex AI GenerativeModel only when needed
+            try:
+                from vertexai.generative_models import GenerativeModel
+            except ImportError:
+                from vertexai.preview.generative_models import GenerativeModel
+            
             model = GenerativeModel('gemini-2.5-flash')
             response = model.generate_content(
                 prompt,
