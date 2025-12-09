@@ -13,14 +13,24 @@ try:
 except ImportError:
     from vertexai.preview.generative_models import GenerativeModel
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import google.auth
 from google.auth.exceptions import DefaultCredentialsError
+import requests
+import xml.etree.ElementTree as ET
+from urllib.parse import urlparse, quote
+import urllib3
+
+# Disable SSL warnings for self-signed certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Import prompt building functions
-from prompts import build_summarization_prompt
+from .prompts import build_summarization_prompt
 
 app = FastAPI(title="Tableau Summarizer API", version="1.0.0")
+
+# Cache for datasource LUIDs (key: server_url:datasource_name, value: {luid, timestamp})
+datasource_luid_cache = {}
 
 # Enable CORS for Tableau extension frontend
 app.add_middleware(
@@ -138,6 +148,9 @@ async def summarize(request: SummarizeRequest):
     - metadata: dashboard metadata
     - context: optional user context
     """
+    print("=" * 50)
+    print("SUMMARIZE ENDPOINT CALLED")
+    print("=" * 50)
     try:
         if USE_VERTEX_AI is None:
             raise HTTPException(
@@ -198,6 +211,25 @@ class TestPromptResponse(BaseModel):
     prompt: Optional[str] = None
     error: Optional[str] = None
 
+class DatasourceLuidRequest(BaseModel):
+    datasource_name: str
+    server_url: str
+    site_content_url: Optional[str] = ""
+    auth_method: str  # 'pat' or 'standard'
+    # For PAT
+    pat_name: Optional[str] = None
+    pat_secret: Optional[str] = None
+    # For standard auth
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+class DatasourceLuidResponse(BaseModel):
+    success: bool
+    luid: Optional[str] = None
+    datasource_name: str
+    cached: bool = False
+    error: Optional[str] = None
+
 @app.post('/api/test-prompt', response_model=TestPromptResponse)
 async def test_prompt(request: SummarizeRequest):
     """
@@ -219,6 +251,220 @@ async def test_prompt(request: SummarizeRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def get_tableau_api_version(server_url):
+    """Get Tableau Server REST API version dynamically"""
+    try:
+        # Try to get server info to determine version
+        response = requests.get(f"{server_url}/api/3.0/serverinfo", verify=False, timeout=10)
+        if response.status_code == 200:
+            root = ET.fromstring(response.content)
+            ns = {'t': 'http://tableau.com/api'}
+            restapi_version = root.find('.//t:restApiVersion', ns)
+            if restapi_version is not None:
+                print(f"  Server API Version: {restapi_version.text}")
+                return restapi_version.text
+        print("  Could not determine version, using 3.24")
+        return "3.24"
+    except Exception as e:
+        print(f"  Version detection failed: {e}, using 3.24")
+        return "3.24"
+
+def tableau_rest_signin(server_url, site_content_url, auth_method, pat_name=None, pat_secret=None, username=None, password=None):
+    """Sign in to Tableau Server REST API"""
+    api_version = get_tableau_api_version(server_url)
+    
+    # Build signin request
+    if auth_method == 'pat':
+        signin_xml = f"""<tsRequest>
+    <credentials personalAccessTokenName="{pat_name}" personalAccessTokenSecret="{pat_secret}">
+        <site contentUrl="{site_content_url}" />
+    </credentials>
+</tsRequest>"""
+    else:  # standard
+        signin_xml = f"""<tsRequest>
+    <credentials name="{username}" password="{password}">
+        <site contentUrl="{site_content_url}" />
+    </credentials>
+</tsRequest>"""
+    
+    print(f"→ Signing in to Tableau REST API at {server_url}")
+    print(f"  API Version: {api_version}")
+    print(f"  Auth Method: {auth_method}")
+    print(f"  Site: '{site_content_url}'")
+    
+    response = requests.post(
+        f"{server_url}/api/{api_version}/auth/signin",
+        data=signin_xml.strip(),
+        headers={'Content-Type': 'application/xml'},
+        verify=False,
+        timeout=30
+    )
+    
+    if response.status_code != 200:
+        print(f"✗ Signin failed: {response.status_code}")
+        print(f"  Response: {response.text}")
+        raise Exception(f"Tableau REST API signin failed: {response.status_code} - {response.text}")
+    
+    try:
+        root = ET.fromstring(response.content)
+        
+        # Tableau REST API uses a namespace
+        ns = {'t': 'http://tableau.com/api'}
+        
+        credentials = root.find('.//t:credentials', ns)
+        site = root.find('.//t:site', ns)
+        
+        if credentials is None:
+            # Try without namespace as fallback
+            credentials = root.find('.//credentials')
+        if site is None:
+            site = root.find('.//site')
+        
+        if credentials is None:
+            raise Exception("No credentials element found in response")
+        if site is None:
+            raise Exception("No site element found in response")
+        
+        token = credentials.get('token')
+        site_id = site.get('id')
+        
+        if not token:
+            raise Exception("No token in credentials")
+        if not site_id:
+            raise Exception("No site ID in response")
+        
+        print(f"✓ Signed in successfully, site ID: {site_id}")
+        return token, site_id, api_version
+        
+    except Exception as e:
+        print(f"✗ Error parsing signin response: {str(e)}")
+        print(f"  Response content: {response.content.decode('utf-8')[:1000]}")
+        raise Exception(f"Failed to parse signin response: {str(e)}")
+
+def tableau_rest_get_datasource_luid(server_url, token, site_id, api_version, datasource_name):
+    """Get datasource LUID by name using REST API with filter"""
+    # URL encode the datasource name for the filter
+    encoded_name = quote(datasource_name)
+    
+    # Use filter parameter to search by name
+    response = requests.get(
+        f"{server_url}/api/{api_version}/sites/{site_id}/datasources?filter=name:eq:{encoded_name}",
+        headers={
+            'X-Tableau-Auth': token,
+            'Content-Type': 'application/xml'
+        },
+        verify=False,
+        timeout=30
+    )
+    
+    if response.status_code != 200:
+        raise Exception(f"Failed to get datasources: {response.status_code} - {response.text}")
+    
+    root = ET.fromstring(response.content)
+    
+    # Tableau REST API uses a namespace
+    ns = {'t': 'http://tableau.com/api'}
+    
+    # Get the first matching datasource
+    datasource = root.find('.//t:datasource', ns)
+    
+    if datasource is None:
+        raise Exception(f"Datasource '{datasource_name}' not found on server")
+    
+    luid = datasource.get('id')
+    
+    if not luid:
+        raise Exception(f"Datasource found but has no ID")
+    
+    print(f"✓ Found datasource LUID: {luid}")
+    return luid
+
+def tableau_rest_signout(server_url, token, api_version):
+    """Sign out from Tableau Server REST API"""
+    try:
+        requests.post(
+            f"{server_url}/api/{api_version}/auth/signout",
+            headers={'X-Tableau-Auth': token},
+            verify=False,
+            timeout=10
+        )
+    except:
+        pass  # Best effort signout
+
+@app.post('/api/datasource-luid', response_model=DatasourceLuidResponse)
+async def get_datasource_luid(request: DatasourceLuidRequest):
+    """
+    Get Tableau datasource LUID by name using REST API
+    Caches results for 4 hours
+    """
+    try:
+        cache_key = f"{request.server_url}:{request.datasource_name}"
+        
+        # Check cache
+        if cache_key in datasource_luid_cache:
+            cached_data = datasource_luid_cache[cache_key]
+            cache_age = datetime.now() - cached_data['timestamp']
+            
+            # Cache valid for 4 hours
+            if cache_age < timedelta(hours=4):
+                print(f"✓ Returning cached LUID for {request.datasource_name}")
+                return DatasourceLuidResponse(
+                    success=True,
+                    luid=cached_data['luid'],
+                    datasource_name=request.datasource_name,
+                    cached=True
+                )
+        
+        print(f"→ Looking up LUID for datasource: {request.datasource_name}")
+        
+        # Sign in to Tableau REST API
+        token, site_id, api_version = tableau_rest_signin(
+            request.server_url,
+            request.site_content_url,
+            request.auth_method,
+            pat_name=request.pat_name,
+            pat_secret=request.pat_secret,
+            username=request.username,
+            password=request.password
+        )
+        
+        print(f"✓ Signed in to Tableau REST API (version {api_version})")
+        
+        # Get datasource LUID
+        luid = tableau_rest_get_datasource_luid(
+            request.server_url,
+            token,
+            site_id,
+            api_version,
+            request.datasource_name
+        )
+        
+        print(f"✓ Found LUID: {luid}")
+        
+        # Sign out
+        tableau_rest_signout(request.server_url, token, api_version)
+        
+        # Cache the result
+        datasource_luid_cache[cache_key] = {
+            'luid': luid,
+            'timestamp': datetime.now()
+        }
+        
+        return DatasourceLuidResponse(
+            success=True,
+            luid=luid,
+            datasource_name=request.datasource_name,
+            cached=False
+        )
+        
+    except Exception as e:
+        print(f"Error getting datasource LUID: {str(e)}")
+        return DatasourceLuidResponse(
+            success=False,
+            datasource_name=request.datasource_name,
+            error=str(e)
+        )
 
 if __name__ == '__main__':
     import uvicorn

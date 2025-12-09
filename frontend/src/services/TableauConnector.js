@@ -463,11 +463,22 @@ export async function getAllDatasources() {
         
         for (const datasource of datasources) {
           if (!datasourcesMap.has(datasource.id)) {
-            datasourcesMap.set(datasource.id, {
+            const dsInfo = {
               id: datasource.id,
               name: datasource.name,
               connectionName: datasource.connectionName || 'N/A'
+            };
+            
+            // Log all available properties to see what we have
+            console.log('Datasource properties:', {
+              id: datasource.id,
+              name: datasource.name,
+              connectionName: datasource.connectionName,
+              isExtract: datasource.isExtract,
+              allKeys: Object.keys(datasource)
             });
+            
+            datasourcesMap.set(datasource.id, dsInfo);
           }
         }
       } catch (err) {

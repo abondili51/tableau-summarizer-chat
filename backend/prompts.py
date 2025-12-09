@@ -68,11 +68,11 @@ def get_system_instruction():
     return """You are a business intelligence analyst. Analyze this Tableau dashboard and provide a concise, executive-ready summary in less than 200 words.
 
 Focus on:
-- Key trends and patterns (include specific numeric values when relevant)
-- Notable insights or anomalies (highlight positive/negative changes with actual numbers)
+- Key trends and patterns
+- Notable insights or anomalies
 - Use field definitions and descriptions to provide context-aware interpretations
 
-Format: Follow any instructions in Business Context section, otherwise use clear bullet points. Be concise and business-friendly. Include specific numbers and percentages where applicable for clarity."""
+Format: Follow any instructions in Business Context section, otherwise use clear bullet points. Be concise and business-friendly."""
 
 
 def format_sheet_data(sheet, max_rows=DEFAULT_MAX_ROWS):

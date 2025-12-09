@@ -1,5 +1,58 @@
 import React, { useState, useEffect, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+
+let ReactMarkdown = null;
+try {
+  // Try to import ReactMarkdown, but don't fail if it doesn't work
+  ReactMarkdown = require('react-markdown').default;
+} catch (e) {
+  console.warn('ReactMarkdown not available, will use plain text', e);
+}
+
+/**
+ * Safe Text Renderer with optional markdown
+ */
+function RenderMarkdown({ content }) {
+  const [renderError, setRenderError] = useState(false);
+  
+  // If ReactMarkdown failed to load or had error, render as plain text
+  if (!ReactMarkdown || renderError) {
+    return (
+      <div className="whitespace-pre-wrap text-sm">
+        {String(content || 'Empty response')}
+      </div>
+    );
+  }
+  
+  // Try to render with markdown
+  try {
+    return (
+      <ReactMarkdown
+        components={{
+          // Simple, safe overrides
+          p: ({children}) => <p className="mb-2">{children}</p>,
+          code: ({inline, children}) => (
+            inline ? 
+              <code className="bg-gray-200 px-1 rounded text-xs font-mono">{children}</code> :
+              <pre className="bg-gray-800 text-white p-2 rounded overflow-x-auto my-2"><code className="text-xs">{children}</code></pre>
+          ),
+          ul: ({children}) => <ul className="list-disc list-inside mb-2">{children}</ul>,
+          ol: ({children}) => <ol className="list-decimal list-inside mb-2">{children}</ol>,
+          li: ({children}) => <li className="mb-1">{children}</li>,
+        }}
+      >
+        {String(content)}
+      </ReactMarkdown>
+    );
+  } catch (error) {
+    console.error('Markdown rendering failed, falling back to plain text:', error);
+    setRenderError(true);
+    return (
+      <div className="whitespace-pre-wrap text-sm">
+        {String(content || 'Empty response')}
+      </div>
+    );
+  }
+}
 
 /**
  * ChatInterface Component
@@ -37,6 +90,12 @@ function ChatInterface({
       return;
     }
 
+    // Validate datasource ID is provided
+    if (!datasourceId) {
+      setError('No datasource selected. Please select a datasource from the dropdown above.');
+      return;
+    }
+
     const userMessage = {
       id: Date.now(),
       role: 'user',
@@ -52,13 +111,6 @@ function ChatInterface({
     try {
       const { sendChatQuery } = await import('../services/ChatService');
       
-      console.log('Sending chat query...', {
-        question: inputValue,
-        datasourceId,
-        hasToken: !!accessToken,
-        sessionId
-      });
-      
       const response = await sendChatQuery({
         question: inputValue,
         datasourceId: datasourceId,
@@ -67,13 +119,15 @@ function ChatInterface({
         summaryContext: summaryContext
       });
 
-      console.log('Received chat response:', response);
+      console.log('✓ Received chat response');
 
       // Ensure we have a valid answer
       if (!response || typeof response.answer !== 'string') {
+        console.error('Invalid response structure:', response);
         throw new Error('Invalid response format from chat agent');
       }
 
+      // Create the assistant message
       const assistantMessage = {
         id: Date.now() + 1,
         role: 'assistant',
@@ -86,11 +140,24 @@ function ChatInterface({
         }
       };
 
+      // Update messages
       setMessages(prev => [...prev, assistantMessage]);
-      setError(null); // Clear any previous errors
+      setError(null);
+      console.log('✓ Message displayed successfully');
     } catch (err) {
       console.error('Chat error:', err);
       console.error('Error details:', err.stack);
+      
+      // Add error message directly to chat
+      const errorMessage = {
+        id: Date.now() + 2,
+        role: 'assistant',
+        content: `❌ Error: ${err.message || 'Failed to get response'}\n\nPlease check the browser console for details.`,
+        timestamp: new Date(),
+        isError: true
+      };
+      
+      setMessages(prev => [...prev, errorMessage]);
       setError(err.message || 'Failed to get response');
       
       // If auth error, trigger auth flow
@@ -180,48 +247,53 @@ function ChatInterface({
           </div>
         ) : (
           <>
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`max-w-3xl ${
-                    message.role === 'user'
-                      ? 'bg-tableau-blue text-white rounded-lg px-4 py-2.5'
-                      : 'bg-gray-100 text-gray-900 rounded-lg px-4 py-3 border border-gray-200'
-                  }`}
-                >
-                  {message.role === 'assistant' ? (
-                    <div className="prose prose-sm max-w-none">
-                      {message.content ? (
-                        <ReactMarkdown
-                          components={{
-                            // Override code blocks to prevent rendering issues
-                            code: ({node, inline, className, children, ...props}) => (
-                              inline ? 
-                                <code className="bg-gray-200 px-1 rounded text-xs" {...props}>{children}</code> :
-                                <pre className="bg-gray-800 text-white p-2 rounded overflow-x-auto"><code {...props}>{children}</code></pre>
-                            )
-                          }}
-                        >
-                          {String(message.content)}
-                        </ReactMarkdown>
-                      ) : (
-                        <p className="text-gray-500 italic">Empty response</p>
-                      )}
-                      {message.metadata?.executionTime && (
-                        <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-500">
-                          Execution time: {message.metadata.executionTime.toFixed(2)}s
+            {messages.map((message) => {
+              try {
+                return (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-3xl ${
+                        message.role === 'user'
+                          ? 'bg-tableau-blue text-white rounded-lg px-4 py-2.5'
+                          : 'bg-gray-100 text-gray-900 rounded-lg px-4 py-3 border border-gray-200'
+                      }`}
+                    >
+                      {message.role === 'assistant' ? (
+                        <div className="prose prose-sm max-w-none">
+                          {message.content ? (
+                            <RenderMarkdown content={message.content} />
+                          ) : (
+                            <p className="text-gray-500 italic">Empty response</p>
+                          )}
+                          {message.metadata?.executionTime && (
+                            <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-500">
+                              Execution time: {message.metadata.executionTime.toFixed(2)}s
+                            </div>
+                          )}
                         </div>
+                      ) : (
+                        <p className="text-sm whitespace-pre-wrap">{message.content || '(empty message)'}</p>
                       )}
                     </div>
-                  ) : (
-                    <p className="text-sm whitespace-pre-wrap">{message.content || '(empty message)'}</p>
-                  )}
-                </div>
-              </div>
-            ))}
+                  </div>
+                );
+              } catch (renderError) {
+                console.error('Error rendering message:', message, renderError);
+                return (
+                  <div key={message.id} className="flex justify-start">
+                    <div className="max-w-3xl bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+                      <p className="text-red-800 text-sm font-semibold">Error rendering message</p>
+                      <pre className="text-xs text-gray-600 mt-2 whitespace-pre-wrap overflow-auto">
+                        {JSON.stringify(message, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                );
+              }
+            })}
             {loading && (
               <div className="flex justify-start">
                 <div className="bg-gray-100 rounded-lg px-4 py-3 border border-gray-200">
@@ -266,7 +338,7 @@ function ChatInterface({
           </div>
           <button
             onClick={handleSendMessage}
-            disabled={loading || !inputValue.trim() || !accessToken}
+            disabled={loading || !inputValue.trim() || !accessToken || !datasourceId}
             className="px-6 py-2.5 bg-tableau-blue hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors flex items-center space-x-2"
           >
             {loading ? (
@@ -290,6 +362,11 @@ function ChatInterface({
         {!accessToken && (
           <p className="mt-2 text-xs text-gray-500">
             Please authenticate to start chatting with your data
+          </p>
+        )}
+        {!datasourceId && accessToken && (
+          <p className="mt-2 text-xs text-amber-600">
+            ⚠️ No datasource selected. Please select a datasource from the dropdown above.
           </p>
         )}
       </div>

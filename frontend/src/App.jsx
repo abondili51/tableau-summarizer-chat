@@ -95,10 +95,12 @@ function App() {
       
       // Get all datasources
       const allDatasources = await getAllDatasources();
+      console.log('All datasources found:', allDatasources);
       setDatasources(allDatasources);
       
       // Set primary datasource as default
       if (allDatasources.length > 0) {
+        console.log('Setting default datasource:', allDatasources[0]);
         setSelectedDatasource(allDatasources[0]);
       }
       
@@ -214,11 +216,76 @@ function App() {
   };
 
   /**
+   * Lookup datasource LUID using REST API via backend
+   */
+  const lookupDatasourceLuid = async (datasourceName, authData) => {
+    try {
+      console.log(`→ Looking up LUID for datasource: ${datasourceName}`);
+      
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8001'}/api/datasource-luid`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          datasource_name: datasourceName,
+          server_url: serverInfo?.serverUrl || authData.serverUrl,
+          site_content_url: serverInfo?.siteContentUrl || authData.siteContentUrl || '',
+          auth_method: authData.authMethod,
+          pat_name: authData.patName,
+          pat_secret: authData.patSecret,
+          username: authData.username,
+          password: authData.password
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success && data.luid) {
+        console.log(`✓ Got LUID: ${data.luid} (cached: ${data.cached})`);
+        return data.luid;
+      } else {
+        console.error('Failed to get LUID:', data.error);
+        return null;
+      }
+    } catch (error) {
+      console.error('Error looking up datasource LUID:', error);
+      return null;
+    }
+  };
+
+  /**
    * Handle successful authentication
    */
-  const handleAuthenticated = (token) => {
+  const handleAuthenticated = async (token, authData) => {
     setChatAccessToken(token);
     setShowAuthModal(false);
+    
+    // Lookup LUIDs for all datasources
+    if (datasources.length > 0) {
+      console.log('→ Looking up LUIDs for all datasources...');
+      
+      const updatedDatasources = [];
+      for (const ds of datasources) {
+        const luid = await lookupDatasourceLuid(ds.name, authData);
+        updatedDatasources.push({
+          ...ds,
+          luid: luid || ds.id  // Use LUID if found, fallback to original ID
+        });
+      }
+      
+      setDatasources(updatedDatasources);
+      
+      // Update selected datasource
+      if (selectedDatasource) {
+        const updated = updatedDatasources.find(ds => ds.id === selectedDatasource.id);
+        if (updated) {
+          setSelectedDatasource(updated);
+        }
+      }
+      
+      console.log('✓ Updated datasources with LUIDs');
+    }
   };
 
   /**
@@ -358,7 +425,7 @@ function App() {
         )}
 
         {/* Summary Mode */}
-        {mode === 'summary' && (
+        <div style={{ display: mode === 'summary' ? 'block' : 'none' }}>
           <>
             {/* Configuration Panel */}
             <div className="bg-white shadow-sm rounded-lg p-6 mb-6">
@@ -504,10 +571,10 @@ function App() {
               </div>
             )}
           </>
-        )}
+        </div>
 
         {/* Chat Mode */}
-        {mode === 'chat' && (
+        <div style={{ display: mode === 'chat' ? 'block' : 'none' }}>
           <>
             {/* Datasource Selector & Auth Status */}
             <div className="bg-white shadow-sm rounded-lg p-6 mb-6">
@@ -527,7 +594,7 @@ function App() {
                   >
                     {datasources.map((ds) => (
                       <option key={ds.id} value={ds.id}>
-                        {ds.name} {ds.connectionName !== 'N/A' ? `(${ds.connectionName})` : ''}
+                        {ds.name} {ds.luid ? '✓' : '⚠️'}
                       </option>
                     ))}
                   </select>
@@ -555,7 +622,7 @@ function App() {
             {/* Chat Interface */}
             <div className="bg-white shadow-sm rounded-lg overflow-hidden" style={{ height: 'calc(100vh - 400px)', minHeight: '500px' }}>
               <ChatInterface
-                datasourceId={selectedDatasource?.id}
+                datasourceId={selectedDatasource?.luid || selectedDatasource?.id}
                 datasourceName={selectedDatasource?.name}
                 accessToken={chatAccessToken}
                 summaryContext={summary}
@@ -563,7 +630,7 @@ function App() {
               />
             </div>
           </>
-        )}
+        </div>
       </div>
 
       {/* Auth Modal */}

@@ -26,7 +26,7 @@ export async function authenticateChatAgent(credentials) {
     
     switch (authMethod) {
       case 'pat':
-        endpoint = '/api/v1/auth/pat';
+        endpoint = '/api/auth/pat';
         payload = {
           pat_name: authData.patName,
           pat_secret: authData.patSecret,
@@ -37,7 +37,7 @@ export async function authenticateChatAgent(credentials) {
         break;
         
       case 'standard':
-        endpoint = '/api/v1/auth/login';
+        endpoint = '/api/auth/login';
         payload = {
           username: authData.username,
           password: authData.password,
@@ -48,7 +48,7 @@ export async function authenticateChatAgent(credentials) {
         break;
         
       case 'oauth':
-        endpoint = '/api/v1/auth/oauth/login';
+        endpoint = '/api/auth/oauth/login';
         payload = {
           client_id: authData.clientId,
           auth_code: authData.authCode,
@@ -63,6 +63,12 @@ export async function authenticateChatAgent(credentials) {
         throw new Error(`Unsupported auth method: ${authMethod}`);
     }
     
+    console.log('→ Authenticating with chat agent');
+    console.log('  Chat Agent URL:', CHAT_AGENT_URL);
+    console.log('  Endpoint:', endpoint);
+    console.log('  Auth method:', authMethod);
+    console.log('  Server URL:', serverUrl);
+    
     const response = await fetch(`${CHAT_AGENT_URL}${endpoint}`, {
       method: 'POST',
       headers: {
@@ -74,8 +80,16 @@ export async function authenticateChatAgent(credentials) {
     const data = await response.json();
     
     if (!response.ok) {
+      console.error('❌ Authentication failed');
+      console.error('  Status:', response.status);
+      console.error('  Response:', data);
       throw new Error(data.detail || 'Authentication failed');
     }
+    
+    console.log('✓ Authentication successful');
+    console.log('  User ID:', data.user_id);
+    console.log('  Site ID:', data.site_id);
+    console.log('  Token expires in:', data.expires_in, 'seconds');
     
     if (data.success && data.access_token) {
       return {
@@ -133,13 +147,19 @@ export async function sendChatQuery(params) {
       };
     }
     
-    console.log('Sending payload to chat agent:', payload);
-    console.log('Chat agent URL:', `${CHAT_AGENT_URL}/api/v1/agent/query`);
+    console.log('→ Sending query to chat agent');
+    console.log('  Chat Agent URL:', CHAT_AGENT_URL);
+    console.log('  Datasource ID being sent:', datasourceId);
+    console.log('  Question:', question.substring(0, 50) + '...');
+    console.log('  Access Token present:', !!accessToken);
+    if (accessToken) {
+      console.log('  Token preview:', accessToken.substring(0, 20) + '...');
+    }
     
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
     
-    const response = await fetch(`${CHAT_AGENT_URL}/api/v1/agent/query`, {
+    const response = await fetch(`${CHAT_AGENT_URL}/api/agent/query`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -153,14 +173,19 @@ export async function sendChatQuery(params) {
     
     const data = await response.json();
     
-    console.log('Chat agent response status:', response.status);
-    console.log('Chat agent response data:', data);
-    
     if (!response.ok) {
+      console.error('❌ Chat agent request failed');
+      console.error('  Status:', response.status);
+      console.error('  Response data:', data);
+      
+      // Handle authentication errors specifically
+      if (response.status === 401) {
+        throw new Error('Authentication failed. Please re-authenticate with the chat agent.');
+      }
+      
       // For 422 validation errors, show detailed field errors
       if (response.status === 422 && data.detail) {
-        console.error('Validation error details:', data.detail);
-        // Format validation errors for display
+        console.error('Validation error:', data.detail);
         if (Array.isArray(data.detail)) {
           const errors = data.detail.map(err => 
             `${err.loc?.join('.')} - ${err.msg}`
@@ -171,14 +196,26 @@ export async function sendChatQuery(params) {
       throw new Error(data.detail || data.error || data.message || 'Query failed');
     }
     
+    // Validate we have the expected fields
+    if (typeof data !== 'object' || data === null) {
+      console.error('Invalid response type:', data);
+      throw new Error('Invalid response format - expected object');
+    }
+    
+    // Check for answer field
+    if (!data.answer && data.answer !== '') {
+      console.error('Missing answer field in response');
+      throw new Error('No answer field in response');
+    }
+    
     // Handle the response - the backend returns the data directly without a wrapper
     return {
-      answer: data.answer || 'No answer received',
+      answer: String(data.answer || 'No answer received'),
       status: data.status || 'unknown',
-      reasoningProcess: data.reasoning_process || [],
+      reasoningProcess: Array.isArray(data.reasoning_process) ? data.reasoning_process : [],
       queryMetadata: data.query_metadata || {},
       conversationId: data.conversation_id || null,
-      executionTime: data.execution_time_seconds || 0
+      executionTime: typeof data.execution_time_seconds === 'number' ? data.execution_time_seconds : 0
     };
   } catch (error) {
     console.error('Chat query error:', error);
@@ -225,7 +262,7 @@ export async function sendStreamingChatQuery(params, onChunk) {
       };
     }
     
-    const response = await fetch(`${CHAT_AGENT_URL}/api/v1/agent/query/stream`, {
+    const response = await fetch(`${CHAT_AGENT_URL}/api/agent/query/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

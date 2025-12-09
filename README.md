@@ -9,9 +9,10 @@ AI-powered Tableau dashboard extension that generates business insights using Go
 - 🤖 **AI-Powered Insights**: Leverage Google Gemini to generate actionable business summaries
 - 📝 **Custom Context**: Add business context to guide AI analysis (available to all users)
 - 🔧 **Custom System Prompt**: Authors can customize the AI's core instructions (author-only)
+- 🎨 **Color Formatting**: Authors can instruct the AI to use colors for emphasis (supports all CSS colors, see [examples](./EXAMPLE_COLOR_PROMPT.md))
 - 🔄 **Auto-Refresh**: Automatically update summary when filters change
 - 📊 **Metadata Integration**: Includes dashboard filters, titles, and active selections
-- 💾 **Export Options**: Copy to clipboard or download as text file
+- 💾 **Export Options**: Copy to clipboard or download as HTML file with all formatting preserved
 
 ### Chat Mode (NEW!)
 - 💬 **Interactive Q&A**: Ask natural language questions about your Tableau datasource

@@ -94,7 +94,16 @@ function AuthModal({ isOpen, onClose, onAuthenticated, serverUrl, siteContentUrl
         timestamp: Date.now()
       });
       
-      onAuthenticated(result.token);
+      // Pass both token and auth data for LUID lookup
+      onAuthenticated(result.token, {
+        authMethod,
+        serverUrl: finalServerUrl,
+        siteContentUrl: finalSiteContentUrl,
+        patName: authData.patName,
+        patSecret: authData.patSecret,
+        username: authData.username,
+        password: authData.password
+      });
       onClose();
     } catch (err) {
       console.error('Authentication error:', err);
