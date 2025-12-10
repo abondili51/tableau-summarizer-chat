@@ -359,7 +359,7 @@ export async function saveSettings(settings) {
 }
 
 /**
- * Load extension settings
+ * Load extension settings (workbook-level)
  */
 export function loadSettings() {
   if (!tableau) {
@@ -372,6 +372,52 @@ export function loadSettings() {
   } catch (error) {
     console.error('Error loading settings:', error);
     return null;
+  }
+}
+
+/**
+ * Get a parameter value by name
+ * @param {string} parameterName - Name of the parameter
+ * @returns {Promise<string|number|boolean|null>} Parameter value or null if not found
+ */
+export async function getParameter(parameterName) {
+  if (!dashboard) {
+    throw new Error('Tableau not initialized');
+  }
+
+  try {
+    const parameter = await dashboard.findParameterAsync(parameterName);
+    if (parameter) {
+      return parameter.currentValue.value;
+    }
+    return null;
+  } catch (error) {
+    console.warn(`Parameter '${parameterName}' not found:`, error);
+    return null;
+  }
+}
+
+/**
+ * Set a parameter value by name
+ * @param {string} parameterName - Name of the parameter
+ * @param {string|number|boolean} newValue - New value for the parameter
+ */
+export async function setParameter(parameterName, newValue) {
+  if (!dashboard) {
+    throw new Error('Tableau not initialized');
+  }
+
+  try {
+    const parameter = await dashboard.findParameterAsync(parameterName);
+    if (parameter) {
+      await parameter.changeValueAsync(newValue);
+      console.log(`Parameter '${parameterName}' updated to:`, newValue);
+    } else {
+      console.warn(`Parameter '${parameterName}' not found, cannot update`);
+    }
+  } catch (error) {
+    console.error(`Error setting parameter '${parameterName}':`, error);
+    throw error;
   }
 }
 

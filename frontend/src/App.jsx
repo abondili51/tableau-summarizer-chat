@@ -4,7 +4,7 @@ import ContextInput from './components/ContextInput';
 import SummaryPanel from './components/SummaryPanel';
 import ChatInterface from './components/ChatInterface';
 import AuthModal from './components/AuthModal';
-import { initializeTableau, getSheets, extractSheetData, getDashboardMetadata, getDatasourceMetadata, subscribeToFilterChanges, subscribeToParameterChanges, getTableauServerInfo, getPrimaryDatasourceId, getAllDatasources, saveSettings, loadSettings } from './services/TableauConnector';
+import { initializeTableau, getSheets, extractSheetData, getDashboardMetadata, getDatasourceMetadata, subscribeToFilterChanges, subscribeToParameterChanges, getTableauServerInfo, getPrimaryDatasourceId, getAllDatasources, saveSettings, loadSettings, getParameter, setParameter } from './services/TableauConnector';
 import { generateSummary } from './services/GeminiService';
 import { getStoredAuthCredentials } from './services/ChatService';
 
@@ -32,6 +32,8 @@ function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [autoGenerateOnLoad, setAutoGenerateOnLoad] = useState(false);
+  const [shouldAutoGenerateOnInit, setShouldAutoGenerateOnInit] = useState(false);
   
   // Chat mode state
   const [mode, setMode] = useState('summary'); // 'summary' or 'chat'
@@ -58,16 +60,24 @@ function App() {
     }
   }, [isInitialized, autoRefresh, selectedSheets, summary]);
 
-  // Auto-save system prompt when author changes it
+  // Auto-save workbook settings when they change (authors only)
   useEffect(() => {
     if (isInitialized && serverInfo?.mode === 'authoring') {
       setSavingSettings(true);
       const timeoutId = setTimeout(async () => {
         try {
-          await saveSettings({ systemPrompt });
+          const settingsToSave = {
+            systemPrompt,
+            selectedSheets,
+            autoRefresh,
+            autoGenerateOnLoad
+          };
+          
+          await saveSettings(settingsToSave);
+          console.log('Saved to workbook settings (author)');
           setSavingSettings(false);
         } catch (err) {
-          console.warn('Could not save system prompt:', err);
+          console.warn('Could not save settings:', err);
           setSavingSettings(false);
         }
       }, 1000);
@@ -77,7 +87,37 @@ function App() {
         setSavingSettings(false);
       };
     }
-  }, [systemPrompt, isInitialized, serverInfo]);
+  }, [systemPrompt, selectedSheets, autoRefresh, autoGenerateOnLoad, isInitialized, serverInfo]);
+
+  // Auto-save business context to parameter when it changes (all users)
+  useEffect(() => {
+    if (isInitialized) {
+      const timeoutId = setTimeout(async () => {
+        try {
+          await setParameter('SummarizerContext', context);
+        } catch (err) {
+          console.warn('Could not save context to parameter:', err);
+        }
+      }, 1000);
+
+      return () => {
+        clearTimeout(timeoutId);
+      };
+    }
+  }, [context, isInitialized]);
+
+  // Auto-generate summary on initialization if conditions are met
+  useEffect(() => {
+    if (shouldAutoGenerateOnInit && isInitialized && selectedSheets.length > 0) {
+      console.log('Auto-generating summary on load with sheets:', selectedSheets);
+      setShouldAutoGenerateOnInit(false); // Clear flag to prevent re-triggering
+      
+      // Small delay to ensure all state is settled
+      setTimeout(() => {
+        handleGenerateSummary();
+      }, 100);
+    }
+  }, [shouldAutoGenerateOnInit, isInitialized, selectedSheets]);
 
   /**
    * Initialize the Tableau extension and load available sheets
@@ -114,11 +154,43 @@ function App() {
         }
       }
       
-      // Load saved system prompt (author-configured)
+      // Load saved settings from workbook
+      let workbookSettings = null;
+      let shouldAutoGenerate = false;
+      let validSheetsForAutoGen = [];
+      
       try {
-        const savedSettings = loadSettings();
-        if (savedSettings && savedSettings.systemPrompt) {
-          setSystemPrompt(savedSettings.systemPrompt);
+        // Load workbook-level settings (author-configured)
+        workbookSettings = loadSettings();
+        
+        if (workbookSettings && Object.keys(workbookSettings).length > 0) {
+          // Load system prompt (always from workbook - author-configured only)
+          if (workbookSettings.systemPrompt) {
+            setSystemPrompt(workbookSettings.systemPrompt);
+          } else {
+            setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
+          }
+          
+          // Load selected sheets from workbook settings
+          if (workbookSettings.selectedSheets && Array.isArray(workbookSettings.selectedSheets)) {
+            // Only set sheets that still exist in the dashboard
+            const validSheets = workbookSettings.selectedSheets.filter(sheet => 
+              availableSheets.includes(sheet)
+            );
+            setSelectedSheets(validSheets);
+            validSheetsForAutoGen = validSheets;
+          }
+          
+          // Load auto-generate preference from workbook settings
+          if (workbookSettings.autoGenerateOnLoad !== undefined) {
+            setAutoGenerateOnLoad(workbookSettings.autoGenerateOnLoad);
+            shouldAutoGenerate = workbookSettings.autoGenerateOnLoad;
+          }
+          
+          // Load auto-refresh preference from workbook settings
+          if (workbookSettings.autoRefresh !== undefined) {
+            setAutoRefresh(workbookSettings.autoRefresh);
+          }
         } else {
           // Pre-populate with default on first load
           setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
@@ -129,8 +201,26 @@ function App() {
         setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
       }
       
+      // Load business context from parameter (saved via Custom Views)
+      try {
+        const parameterContext = await getParameter('SummarizerContext');
+        if (parameterContext !== null) {
+          setContext(parameterContext);
+          console.log('Loaded context from SummarizerContext parameter:', parameterContext);
+        }
+      } catch (err) {
+        console.warn('Could not load SummarizerContext parameter:', err);
+      }
+      
       setIsInitialized(true);
       setError(null);
+      
+      // If auto-generate is enabled and we have saved sheets, set flag to trigger auto-generate
+      // The actual generation will happen via useEffect once selectedSheets state is updated
+      if (shouldAutoGenerate && validSheetsForAutoGen.length > 0) {
+        console.log('Auto-generate enabled, will trigger once sheets are loaded...');
+        setShouldAutoGenerateOnInit(true);
+      }
     } catch (err) {
       console.error('Failed to initialize Tableau extension:', err);
       setError('Failed to initialize Tableau extension. Please reload the dashboard.');
@@ -359,6 +449,7 @@ function App() {
                 </span>
               )}
               {mode === 'summary' && (
+                <div className="flex flex-col gap-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -368,6 +459,16 @@ function App() {
                   />
                   <span className="text-sm text-gray-700">Auto-refresh on filter/parameter change</span>
                 </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoGenerateOnLoad}
+                      onChange={(e) => setAutoGenerateOnLoad(e.target.checked)}
+                      className="rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
+                    />
+                    <span className="text-sm text-gray-700">Auto-generate summary on dashboard load</span>
+                  </label>
+                </div>
               )}
             </div>
           </div>
@@ -429,7 +530,26 @@ function App() {
           <>
             {/* Configuration Panel */}
             <div className="bg-white shadow-sm rounded-lg p-6 mb-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Configuration</h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-gray-900">Configuration</h2>
+                {savingSettings && serverInfo?.mode === 'authoring' && (
+                  <span className="flex items-center text-xs text-gray-600">
+                    <svg className="animate-spin h-3 w-3 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Saving...
+                  </span>
+                )}
+                {!savingSettings && isInitialized && serverInfo?.mode === 'authoring' && (
+                  <span className="flex items-center text-xs text-green-600">
+                    <svg className="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    Saved
+                  </span>
+                )}
+              </div>
               
               <div className="space-y-4">
                 {/* Sheet Selector */}
