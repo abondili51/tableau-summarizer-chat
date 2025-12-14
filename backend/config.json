@@ -1,0 +1,29 @@
+{
+  "server": {
+    "port": 8001,
+    "cors_origins": ["*"]
+  },
+  "ai": {
+    "model_name": "gemini-2.5-flash",
+    "location": "us-central1",
+    "generation_config": {
+      "temperature": 0.7,
+      "top_p": 0.8,
+      "top_k": 40
+    }
+  },
+  "data_processing": {
+    "max_rows": 50,
+    "max_fields": 15
+  },
+  "caching": {
+    "datasource_luid_ttl_hours": 4
+  },
+  "tableau": {
+    "default_api_version": "3.24",
+    "api_timeout_seconds": 30,
+    "version_check_timeout_seconds": 10,
+    "signout_timeout_seconds": 10
+  }
+}
+

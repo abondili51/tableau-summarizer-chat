@@ -3,9 +3,12 @@
  * Handles communication with the Tableau chat agent backend
  */
 
-// Backend API URLs
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
-const CHAT_AGENT_URL = import.meta.env.VITE_CHAT_AGENT_URL || 'http://localhost:8000';
+import { getBackendUrl, getChatAgentUrl, getTimeouts } from './ConfigService';
+
+// Backend API URLs from configuration
+const API_BASE_URL = getBackendUrl();
+const CHAT_AGENT_URL = getChatAgentUrl();
+const TIMEOUTS = getTimeouts();
 
 /**
  * Authenticate with the chat agent using PAT or standard credentials
@@ -157,7 +160,7 @@ export async function sendChatQuery(params) {
     }
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUTS.chat_query_ms);
     
     const response = await fetch(`${CHAT_AGENT_URL}/api/agent/query`, {
       method: 'POST',
@@ -314,7 +317,7 @@ export async function sendStreamingChatQuery(params, onChunk) {
 export async function checkChatAgentHealth() {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUTS.health_check_ms);
     
     const response = await fetch(`${CHAT_AGENT_URL}/health`, {
       signal: controller.signal

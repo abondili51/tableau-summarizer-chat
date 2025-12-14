@@ -1,0 +1,113 @@
+# Frontend-specific values for development environment
+# Complete standalone configuration for frontend service using Node.js serve package
+
+# Service identification
+serviceName: frontend
+serviceType: frontend
+
+image:
+  repository: "" # provided by CD
+  pullPolicy: IfNotPresent
+  tag: "" # provided by CD
+  # Container port for Node.js serve package
+  containerPort: 8080
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+rbac:
+  # Specifies whether a role and rolebinding should be created
+  create: true
+  # Annotations to add to the role
+  roleAnnotations: {}
+  # Annotations to add to the rolebinding
+  rolebindingAnnotations: {}
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+service:
+  type: ClusterIP
+  # Frontend service configuration
+  port: 8080
+  targetPort: 8080
+
+istio:
+  enabled: true
+  hosts: [] # provided by CD, first element is the "primary" host
+  type: internal # toggled by CD
+
+replicaCount: 1
+
+# Frontend-specific resource requirements
+resources:
+  limits:
+    cpu: 200m       # Static file serving needs minimal CPU
+    memory: 256Mi    # Static files need minimal memory
+  requests:
+    cpu: 50m
+    memory: 128Mi
+
+podSecurityContext:
+  runAsUser: 1000
+  # fsGroup: 2000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+# Frontend-specific environment variables
+extraEnvs:
+  # URL for manifest.trex file - will be replaced at runtime
+  # This gets overridden by deploy-dev.yaml with actual URL
+
+# Frontend-specific annotations for monitoring
+podAnnotations:
+  admission.datadoghq.com/enabled: "true"
+
+podLabels:
+  admission.datadoghq.com/enabled: "true"
+  tags.datadoghq.com/env: "development"
+  tags.datadoghq.com/service: "tableau-ai-bi-summarization-frontend"
+
+# Health check configuration for Node.js serve package
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 5
+
+# Frontend-specific autoscaling (if enabled)
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

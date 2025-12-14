@@ -3,8 +3,11 @@
  * Handles communication with the backend API for Gemini summarization
  */
 
-// Backend API URL - configure based on deployment
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+import { getBackendUrl, getTimeouts } from './ConfigService';
+
+// Backend API URL from configuration
+const API_BASE_URL = getBackendUrl();
+const TIMEOUTS = getTimeouts();
 
 /**
  * Generate summary using Google Gemini via Vertex AI
@@ -15,7 +18,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
 export async function generateSummary(payload) {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUTS.summary_generation_ms);
 
     const response = await fetch(`${API_BASE_URL}/api/summarize`, {
       method: 'POST',
@@ -97,7 +100,7 @@ export async function testPrompt(payload) {
 export async function checkHealth() {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUTS.health_check_ms);
 
     const response = await fetch(`${API_BASE_URL}/health`, {
       signal: controller.signal

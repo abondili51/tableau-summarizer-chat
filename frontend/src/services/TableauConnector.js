@@ -204,7 +204,7 @@ export async function getDatasourceMetadata() {
 
           // Get all fields from the datasource
           try {
-            const fields = await datasource.getFieldsAsync();
+            const fields = datasource.fields;
             
             for (const field of fields) {
               const fieldInfo = {
@@ -225,18 +225,18 @@ export async function getDatasourceMetadata() {
             console.warn(`Could not get fields for datasource ${datasource.name}:`, err);
           }
 
-          // Get active tables if available (for relationship/join info)
+          // Get logical tables (for relationship/join info)
           try {
-            if (datasource.getActiveTablesAsync) {
-              const activeTables = await datasource.getActiveTablesAsync();
-              datasourceInfo.tables = activeTables.map(table => ({
+            if (datasource.getLogicalTablesAsync) {
+              const logicalTables = await datasource.getLogicalTablesAsync();
+              datasourceInfo.tables = logicalTables.map(table => ({
                 id: table.id,
-                name: table.name
+                name: table.caption || table.id  // LogicalTable uses 'caption' property
               }));
             }
           } catch (err) {
-            // getActiveTablesAsync might not be available in all Tableau versions
-            console.debug(`Could not get active tables for datasource ${datasource.name}:`, err);
+            // getLogicalTablesAsync might not be available in all Tableau versions
+            console.debug(`Could not get logical tables for datasource ${datasource.name}:`, err);
           }
 
           datasourcesMap.set(datasource.id, datasourceInfo);
@@ -302,24 +302,59 @@ export function subscribeToFilterChanges(callback) {
 
 /**
  * Subscribe to parameter change events
+ * Note: Parameter events must be subscribed to on individual Parameter objects, not Dashboard
  * Returns unsubscribe function
  */
-export function subscribeToParameterChanges(callback) {
+export async function subscribeToParameterChanges(callback) {
   if (!dashboard) {
     console.warn('Tableau not initialized, cannot subscribe to parameter changes');
     return null;
   }
 
   try {
-    const unsubscribe = dashboard.addEventListener(
-      tableau.TableauEventType.ParameterChanged,
-      (event) => {
-        console.log('Parameter changed:', event);
-        callback(event);
-      }
-    );
+    // Get all parameters from the dashboard
+    const worksheets = dashboard.worksheets;
+    if (!worksheets || worksheets.length === 0) {
+      console.warn('No worksheets found, cannot subscribe to parameter changes');
+      return null;
+    }
 
-    return unsubscribe;
+    // Get parameters from the first worksheet (parameters are workbook-level)
+    const parameters = await worksheets[0].getParametersAsync();
+    
+    if (!parameters || parameters.length === 0) {
+      console.log('No parameters found in workbook');
+      return () => {}; // Return no-op function
+    }
+
+    const unsubscribeFunctions = [];
+
+    // Subscribe to each parameter individually
+    parameters.forEach(parameter => {
+      try {
+        const unsubscribe = parameter.addEventListener(
+          tableau.TableauEventType.ParameterChanged,
+          (event) => {
+            console.log(`Parameter changed: ${parameter.name}`);
+            callback(event);
+          }
+        );
+        unsubscribeFunctions.push(unsubscribe);
+      } catch (err) {
+        console.warn(`Could not subscribe to parameter ${parameter.name}:`, err);
+      }
+    });
+
+    // Return combined unsubscribe function
+    return () => {
+      unsubscribeFunctions.forEach(unsub => {
+        try {
+          unsub();
+        } catch (err) {
+          console.warn('Error unsubscribing from parameter changes:', err);
+        }
+      });
+    };
   } catch (error) {
     console.error('Error subscribing to parameter changes:', error);
     return null;

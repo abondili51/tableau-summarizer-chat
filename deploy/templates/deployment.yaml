@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "project.fullname" . }}
+  labels:
+    {{- include "project.labels" . | nindent 4 }}
+spec:
+  revisionHistoryLimit: 0 # fix forward rather than roll back
+{{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+{{- end }}
+  selector:
+    matchLabels:
+      {{- include "project.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+    {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      labels:
+        {{- include "project.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels}}
+        {{- toYaml . | nindent 8}}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "project.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        {{- if .Values.backend.enabled }}
+        - name: backend
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: backend
+              containerPort: {{ .Values.backend.image.containerPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: backend
+            initialDelaySeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: backend
+            initialDelaySeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if or .Values.backend.extraEnvs .Values.extraEnvs }}
+          env:
+            {{- range $ev_key, $ev_value := .Values.backend.extraEnvs }}
+            {{- if (typeIs "string" $ev_value) }}
+            - name: {{ $ev_key }}
+              value: {{ $ev_value | quote }}
+            {{- else }}
+            - name: {{ $ev_key }}
+              {{ toYaml $ev_value | nindent 14 }}
+            {{- end }}
+            {{- end }}
+            {{- range $ev_key, $ev_value := .Values.extraEnvs }}
+            {{- if (typeIs "string" $ev_value) }}
+            - name: {{ $ev_key }}
+              value: {{ $ev_value | quote }}
+            {{- else }}
+            - name: {{ $ev_key }}
+              {{ toYaml $ev_value | nindent 14 }}
+            {{- end }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+        {{- if .Values.frontend.enabled }}
+        - name: frontend
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          ports:
+            - name: frontend
+              containerPort: {{ .Values.frontend.image.containerPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: frontend
+            initialDelaySeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: frontend
+            initialDelaySeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

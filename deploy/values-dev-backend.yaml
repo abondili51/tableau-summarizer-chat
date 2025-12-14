@@ -1,0 +1,53 @@
+# Backend-specific values for development environment
+# This file extends values-dev.yaml
+
+# Service identification
+serviceName: backend
+serviceType: backend
+
+image:
+  # Container port for FastAPI backend
+  containerPort: 8000
+
+service:
+  # Backend service configuration
+  port: 8000
+  targetPort: 8000
+
+# Backend-specific resource requirements
+resources:
+  limits:
+    cpu: 1000m      # Backend may need more CPU for AI processing
+    memory: 2048Mi   # Backend may need more memory for ML models
+  requests:
+    cpu: 200m
+    memory: 1024Mi
+
+# Backend-specific environment variables
+extraEnvs:
+  # These will be merged with extraEnvs from values-dev.yaml
+  GOOGLE_CLOUD_PROJECT: "ai-bi-tableau-dna-dev-42deab"
+  GOOGLE_CLOUD_LOCATION: "us-central1"
+  PORT: "8000"
+  ENVIRONMENT: "development"
+
+# Backend-specific pod annotations for Python
+podAnnotations:
+  admission.datadoghq.com/python-lib.version: "v3.17.0"
+
+# Health check configuration for FastAPI
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 40
+  periodSeconds: 30
+  timeoutSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 20
+  periodSeconds: 10
+  timeoutSeconds: 5

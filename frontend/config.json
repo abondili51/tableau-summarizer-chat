@@ -1,0 +1,23 @@
+{
+  "api": {
+    "backend_url": "http://localhost:8001",
+    "chat_agent_url": "http://localhost:8000"
+  },
+  "timeouts": {
+    "summary_generation_ms": 120000,
+    "chat_query_ms": 120000,
+    "health_check_ms": 5000
+  },
+  "parameters": {
+    "context": "SummarizerContext",
+    "sheets": "SummarizerSheets",
+    "auto_refresh": "SummarizerAutoRefresh",
+    "auto_generate": "SummarizerAutoGenerate",
+    "show_context": "SummarizerShowContext",
+    "show_sheet_selector": "SummarizerShowSheetSelector",
+    "show_auto_refresh": "SummarizerShowAutoRefresh",
+    "show_auto_generate": "SummarizerShowAutoGenerate",
+    "show_chat": "SummarizerShowChat"
+  }
+}
+

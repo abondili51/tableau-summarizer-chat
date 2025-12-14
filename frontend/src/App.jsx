@@ -7,6 +7,10 @@ import AuthModal from './components/AuthModal';
 import { initializeTableau, getSheets, extractSheetData, getDashboardMetadata, getDatasourceMetadata, subscribeToFilterChanges, subscribeToParameterChanges, getTableauServerInfo, getPrimaryDatasourceId, getAllDatasources, saveSettings, loadSettings, getParameter, setParameter } from './services/TableauConnector';
 import { generateSummary } from './services/GeminiService';
 import { getStoredAuthCredentials } from './services/ChatService';
+import { getParameterNames, getBackendUrl } from './services/ConfigService';
+
+// Get parameter names from config
+const PARAMS = getParameterNames();
 
 // Default system prompt (matches backend's get_system_instruction())
 const DEFAULT_SYSTEM_PROMPT = `You are a business intelligence analyst. Analyze this Tableau dashboard and provide a concise, executive-ready summary in less than 200 words.
@@ -34,6 +38,29 @@ function App() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [autoGenerateOnLoad, setAutoGenerateOnLoad] = useState(false);
   const [shouldAutoGenerateOnInit, setShouldAutoGenerateOnInit] = useState(false);
+  const [showContextField, setShowContextField] = useState(false); // Default to hidden
+  const [previewAsViewer, setPreviewAsViewer] = useState(false);
+  
+  // Visibility control states (author-controlled via parameters)
+  // Default to FALSE (hidden) - author must explicitly enable via parameters
+  const [showSheetSelector, setShowSheetSelector] = useState(false);
+  const [showAutoRefreshToggle, setShowAutoRefreshToggle] = useState(false);
+  const [showAutoGenerateToggle, setShowAutoGenerateToggle] = useState(false);
+  const [showChatTab, setShowChatTab] = useState(false);
+  const [visibilityControlsExpanded, setVisibilityControlsExpanded] = useState(false);
+  
+  // Track which parameters exist (for warning indicators)
+  const [parameterExistence, setParameterExistence] = useState({
+    [PARAMS.context]: false,
+    [PARAMS.sheets]: false,
+    [PARAMS.auto_refresh]: false,
+    [PARAMS.auto_generate]: false,
+    [PARAMS.show_context]: false,
+    [PARAMS.show_sheet_selector]: false,
+    [PARAMS.show_auto_refresh]: false,
+    [PARAMS.show_auto_generate]: false,
+    [PARAMS.show_chat]: false
+  });
   
   // Chat mode state
   const [mode, setMode] = useState('summary'); // 'summary' or 'chat'
@@ -52,7 +79,13 @@ function App() {
   useEffect(() => {
     if (isInitialized && autoRefresh && selectedSheets.length > 0 && summary) {
       const unsubscribeFilter = subscribeToFilterChanges(handleFilterChange);
-      const unsubscribeParam = subscribeToParameterChanges(handleFilterChange);
+      let unsubscribeParam = null;
+      
+      // subscribeToParameterChanges is async, so handle it properly
+      subscribeToParameterChanges(handleFilterChange).then(unsub => {
+        unsubscribeParam = unsub;
+      });
+
       return () => {
         if (unsubscribeFilter) unsubscribeFilter();
         if (unsubscribeParam) unsubscribeParam();
@@ -89,12 +122,13 @@ function App() {
     }
   }, [systemPrompt, selectedSheets, autoRefresh, autoGenerateOnLoad, isInitialized, serverInfo]);
 
-  // Auto-save business context to parameter when it changes (all users)
+  // Auto-save business context to parameter when it changes
+  // Only save if: author OR context field is visible to user
   useEffect(() => {
-    if (isInitialized) {
+    if (isInitialized && (serverInfo?.mode === 'authoring' || showContextField)) {
       const timeoutId = setTimeout(async () => {
         try {
-          await setParameter('SummarizerContext', context);
+          await setParameter(PARAMS.context, context);
         } catch (err) {
           console.warn('Could not save context to parameter:', err);
         }
@@ -104,7 +138,84 @@ function App() {
         clearTimeout(timeoutId);
       };
     }
-  }, [context, isInitialized]);
+  }, [context, isInitialized, serverInfo, showContextField]);
+
+  // Auto-save selected sheets to parameter when they change
+  // Only save if: author OR sheet selector is visible to user
+  useEffect(() => {
+    if (isInitialized && (serverInfo?.mode === 'authoring' || showSheetSelector)) {
+      const timeoutId = setTimeout(async () => {
+        try {
+          // Save as comma-separated string
+          const sheetsString = selectedSheets.join(',');
+          await setParameter(PARAMS.sheets, sheetsString);
+        } catch (err) {
+          console.warn('Could not save sheets to parameter:', err);
+        }
+      }, 1000);
+
+      return () => {
+        clearTimeout(timeoutId);
+      };
+    }
+  }, [selectedSheets, isInitialized, serverInfo, showSheetSelector]);
+
+  // Auto-save auto-refresh preference to parameter
+  // Only save if: author OR auto-refresh toggle is visible to user
+  useEffect(() => {
+    if (isInitialized && (serverInfo?.mode === 'authoring' || showAutoRefreshToggle)) {
+      const timeoutId = setTimeout(async () => {
+        try {
+          await setParameter(PARAMS.auto_refresh, autoRefresh);
+        } catch (err) {
+          console.warn('Could not save auto-refresh to parameter:', err);
+        }
+      }, 1000);
+
+      return () => {
+        clearTimeout(timeoutId);
+      };
+    }
+  }, [autoRefresh, isInitialized, serverInfo, showAutoRefreshToggle]);
+
+  // Auto-save auto-generate preference to parameter
+  // Only save if: author OR auto-generate toggle is visible to user
+  useEffect(() => {
+    if (isInitialized && (serverInfo?.mode === 'authoring' || showAutoGenerateToggle)) {
+      const timeoutId = setTimeout(async () => {
+        try {
+          await setParameter(PARAMS.auto_generate, autoGenerateOnLoad);
+        } catch (err) {
+          console.warn('Could not save auto-generate to parameter:', err);
+        }
+      }, 1000);
+
+      return () => {
+        clearTimeout(timeoutId);
+      };
+    }
+  }, [autoGenerateOnLoad, isInitialized, serverInfo, showAutoGenerateToggle]);
+
+  // Auto-save visibility controls to parameters (authors only)
+  useEffect(() => {
+    if (isInitialized && serverInfo?.mode === 'authoring') {
+      const timeoutId = setTimeout(async () => {
+        try {
+          await setParameter(PARAMS.show_context, showContextField);
+          await setParameter(PARAMS.show_sheet_selector, showSheetSelector);
+          await setParameter(PARAMS.show_auto_refresh, showAutoRefreshToggle);
+          await setParameter(PARAMS.show_auto_generate, showAutoGenerateToggle);
+          await setParameter(PARAMS.show_chat, showChatTab);
+        } catch (err) {
+          console.warn('Could not save visibility controls to parameters:', err);
+        }
+      }, 1000);
+
+      return () => {
+        clearTimeout(timeoutId);
+      };
+    }
+  }, [showContextField, showSheetSelector, showAutoRefreshToggle, showAutoGenerateToggle, showChatTab, isInitialized, serverInfo]);
 
   // Auto-generate summary on initialization if conditions are met
   useEffect(() => {
@@ -118,6 +229,14 @@ function App() {
       }, 100);
     }
   }, [shouldAutoGenerateOnInit, isInitialized, selectedSheets]);
+
+  // Auto-switch to summary mode if chat tab is hidden and user is in chat mode
+  useEffect(() => {
+    if (isInitialized && mode === 'chat' && serverInfo?.mode !== 'authoring' && !showChatTab) {
+      console.log('Chat tab hidden, switching to summary mode');
+      setMode('summary');
+    }
+  }, [isInitialized, mode, serverInfo, showChatTab]);
 
   /**
    * Initialize the Tableau extension and load available sheets
@@ -154,26 +273,25 @@ function App() {
         }
       }
       
-      // Load saved settings from workbook
+      // Load saved settings from workbook (defaults for all users)
       let workbookSettings = null;
       let shouldAutoGenerate = false;
       let validSheetsForAutoGen = [];
       
       try {
-        // Load workbook-level settings (author-configured)
+        // Load workbook-level settings (author-configured defaults)
         workbookSettings = loadSettings();
         
         if (workbookSettings && Object.keys(workbookSettings).length > 0) {
           // Load system prompt (always from workbook - author-configured only)
           if (workbookSettings.systemPrompt) {
             setSystemPrompt(workbookSettings.systemPrompt);
-          } else {
+        } else {
             setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
           }
           
-          // Load selected sheets from workbook settings
+          // Load selected sheets from workbook settings (may be overridden by parameter)
           if (workbookSettings.selectedSheets && Array.isArray(workbookSettings.selectedSheets)) {
-            // Only set sheets that still exist in the dashboard
             const validSheets = workbookSettings.selectedSheets.filter(sheet => 
               availableSheets.includes(sheet)
             );
@@ -181,35 +299,135 @@ function App() {
             validSheetsForAutoGen = validSheets;
           }
           
-          // Load auto-generate preference from workbook settings
+          // Load auto-generate preference from workbook (may be overridden by parameter)
           if (workbookSettings.autoGenerateOnLoad !== undefined) {
             setAutoGenerateOnLoad(workbookSettings.autoGenerateOnLoad);
             shouldAutoGenerate = workbookSettings.autoGenerateOnLoad;
           }
           
-          // Load auto-refresh preference from workbook settings
+          // Load auto-refresh preference from workbook (may be overridden by parameter)
           if (workbookSettings.autoRefresh !== undefined) {
             setAutoRefresh(workbookSettings.autoRefresh);
           }
         } else {
-          // Pre-populate with default on first load
           setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
         }
       } catch (err) {
         console.warn('Could not load saved settings:', err);
-        // Pre-populate with default on error
         setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
       }
       
       // Load business context from parameter (saved via Custom Views)
       try {
-        const parameterContext = await getParameter('SummarizerContext');
+        const parameterContext = await getParameter(PARAMS.context);
         if (parameterContext !== null) {
           setContext(parameterContext);
-          console.log('Loaded context from SummarizerContext parameter:', parameterContext);
+          setParameterExistence(prev => ({ ...prev, [PARAMS.context]: true }));
+          console.log(`Loaded context from ${PARAMS.context} parameter:`, parameterContext);
         }
       } catch (err) {
-        console.warn('Could not load SummarizerContext parameter:', err);
+        console.warn(`Could not load ${PARAMS.context} parameter:`, err);
+      }
+      
+      // Load visibility settings from parameters (author-controlled)
+      try {
+        const showContextParam = await getParameter(PARAMS.show_context);
+        if (showContextParam !== null) {
+          setShowContextField(showContextParam === true || showContextParam === 'true');
+          setParameterExistence(prev => ({ ...prev, [PARAMS.show_context]: true }));
+          console.log('Context field visibility:', showContextParam);
+        }
+      } catch (err) {
+        console.warn(`Could not load ${PARAMS.show_context} parameter:`, err);
+      }
+      
+      try {
+        const showSheetSelectorParam = await getParameter(PARAMS.show_sheet_selector);
+        if (showSheetSelectorParam !== null) {
+          setShowSheetSelector(showSheetSelectorParam === true || showSheetSelectorParam === 'true');
+          setParameterExistence(prev => ({ ...prev, [PARAMS.show_sheet_selector]: true }));
+          console.log('Sheet selector visibility:', showSheetSelectorParam);
+        }
+      } catch (err) {
+        console.warn(`Could not load ${PARAMS.show_sheet_selector} parameter:`, err);
+      }
+      
+      try {
+        const showAutoRefreshParam = await getParameter(PARAMS.show_auto_refresh);
+        if (showAutoRefreshParam !== null) {
+          setShowAutoRefreshToggle(showAutoRefreshParam === true || showAutoRefreshParam === 'true');
+          setParameterExistence(prev => ({ ...prev, [PARAMS.show_auto_refresh]: true }));
+          console.log('Auto-refresh toggle visibility:', showAutoRefreshParam);
+        }
+      } catch (err) {
+        console.warn(`Could not load ${PARAMS.show_auto_refresh} parameter:`, err);
+      }
+      
+      try {
+        const showAutoGenerateParam = await getParameter(PARAMS.show_auto_generate);
+        if (showAutoGenerateParam !== null) {
+          setShowAutoGenerateToggle(showAutoGenerateParam === true || showAutoGenerateParam === 'true');
+          setParameterExistence(prev => ({ ...prev, [PARAMS.show_auto_generate]: true }));
+          console.log('Auto-generate toggle visibility:', showAutoGenerateParam);
+        }
+      } catch (err) {
+        console.warn(`Could not load ${PARAMS.show_auto_generate} parameter:`, err);
+      }
+      
+      try {
+        const showChatParam = await getParameter(PARAMS.show_chat);
+        if (showChatParam !== null) {
+          setShowChatTab(showChatParam === true || showChatParam === 'true');
+          setParameterExistence(prev => ({ ...prev, [PARAMS.show_chat]: true }));
+          console.log('Chat tab visibility:', showChatParam);
+        }
+      } catch (err) {
+        console.warn(`Could not load ${PARAMS.show_chat} parameter:`, err);
+      }
+      
+      // Load user preference parameters (stored via Custom Views)
+      try {
+        const sheetsParam = await getParameter(PARAMS.sheets);
+        if (sheetsParam !== null) {
+          setParameterExistence(prev => ({ ...prev, [PARAMS.sheets]: true }));
+          if (sheetsParam !== '') {
+            // Parse comma-separated sheet names
+            const paramSheets = sheetsParam.split(',').map(s => s.trim()).filter(s => s);
+            // Only set sheets that still exist in the dashboard
+            const validSheets = paramSheets.filter(sheet => availableSheets.includes(sheet));
+            if (validSheets.length > 0) {
+              setSelectedSheets(validSheets);
+              validSheetsForAutoGen = validSheets;
+              console.log('Loaded sheets from parameter:', validSheets);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`Could not load ${PARAMS.sheets} parameter:`, err);
+      }
+      
+      try {
+        const autoRefreshParam = await getParameter(PARAMS.auto_refresh);
+        if (autoRefreshParam !== null) {
+          setParameterExistence(prev => ({ ...prev, [PARAMS.auto_refresh]: true }));
+          setAutoRefresh(autoRefreshParam === true || autoRefreshParam === 'true');
+          console.log('Auto-refresh from parameter:', autoRefreshParam);
+        }
+      } catch (err) {
+        console.warn(`Could not load ${PARAMS.auto_refresh} parameter:`, err);
+      }
+      
+      try {
+        const autoGenerateParam = await getParameter(PARAMS.auto_generate);
+        if (autoGenerateParam !== null) {
+          setParameterExistence(prev => ({ ...prev, [PARAMS.auto_generate]: true }));
+          const autoGenValue = autoGenerateParam === true || autoGenerateParam === 'true';
+          setAutoGenerateOnLoad(autoGenValue);
+          shouldAutoGenerate = autoGenValue;
+          console.log('Auto-generate from parameter:', autoGenerateParam);
+        }
+      } catch (err) {
+        console.warn(`Could not load ${PARAMS.auto_generate} parameter:`, err);
       }
       
       setIsInitialized(true);
@@ -312,7 +530,7 @@ function App() {
     try {
       console.log(`→ Looking up LUID for datasource: ${datasourceName}`);
       
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8001'}/api/datasource-luid`, {
+      const response = await fetch(`${getBackendUrl()}/api/datasource-luid`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -388,7 +606,7 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       {/* Disclaimer Modal */}
-      {!disclaimerAccepted && (
+      {!disclaimerAccepted && serverInfo?.mode === 'authoring' && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6">
             <div className="flex items-start gap-4">
@@ -437,40 +655,16 @@ function App() {
         <header className="bg-white shadow-sm rounded-lg p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">Dashboard Insights & Chat</h1>
+              <h1 className="text-2xl font-bold text-gray-900">Dashboard Summary</h1>
               <p className="text-sm text-gray-500 mt-1">
-                AI-powered insights and interactive Q&A for your Tableau dashboards
+                AI-powered summary and insights
               </p>
             </div>
-            <div className="flex items-center gap-4">
               {mode === 'summary' && lastUpdated && (
-                <span className="text-xs text-gray-500">
+              <div className="text-xs text-gray-500">
                   Last updated: {lastUpdated.toLocaleTimeString()}
-                </span>
-              )}
-              {mode === 'summary' && (
-                <div className="flex flex-col gap-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={autoRefresh}
-                    onChange={(e) => setAutoRefresh(e.target.checked)}
-                    className="rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
-                  />
-                  <span className="text-sm text-gray-700">Auto-refresh on filter/parameter change</span>
-                </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoGenerateOnLoad}
-                      onChange={(e) => setAutoGenerateOnLoad(e.target.checked)}
-                      className="rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
-                    />
-                    <span className="text-sm text-gray-700">Auto-generate summary on dashboard load</span>
-                  </label>
-                </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Mode Toggle */}
@@ -490,6 +684,9 @@ function App() {
                 <span>Summary</span>
               </div>
             </button>
+            
+            {/* Chat Tab - Show to authors (unless previewing), or viewers if enabled via parameter */}
+            {((serverInfo?.mode === 'authoring' && !previewAsViewer) || showChatTab) && (
             <button
               onClick={() => handleModeChange('chat')}
               className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors ${
@@ -510,6 +707,7 @@ function App() {
                 )}
               </div>
             </button>
+            )}
           </div>
         </header>
 
@@ -551,17 +749,270 @@ function App() {
                 )}
               </div>
               
+              {/* Visibility Controls - Author Only (hidden in preview mode) */}
+              {serverInfo?.mode === 'authoring' && !previewAsViewer && (
+                <div className="mb-4">
+                  <button
+                    onClick={() => setVisibilityControlsExpanded(!visibilityControlsExpanded)}
+                    className="w-full flex items-center justify-between p-3 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <svg className="w-5 h-5 text-indigo-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                        <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/>
+                      </svg>
+                      <span className="text-sm font-semibold text-indigo-900">Visibility Controls</span>
+                      <span className="px-2 py-0.5 bg-indigo-200 text-indigo-800 text-xs font-medium rounded">Author Only</span>
+                    </div>
+                    <svg 
+                      className={`w-5 h-5 text-indigo-600 transition-transform ${visibilityControlsExpanded ? 'rotate-180' : ''}`}
+                      fill="none" 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  
+                  {visibilityControlsExpanded && (
+                    <div className="mt-2 p-4 bg-indigo-50 border border-indigo-200 rounded-lg space-y-3">
+                      <p className="text-xs text-indigo-700 mb-3">
+                        Control which settings viewers can customize. Unchecked controls will use your workbook defaults.
+                      </p>
+                      
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showSheetSelector}
+                          onChange={(e) => setShowSheetSelector(e.target.checked)}
+                          className="mt-0.5 rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
+                        />
+                        <div className="flex-1">
+                          <span className="text-sm font-medium text-indigo-900">Show Sheet Selector</span>
+                          <p className="text-xs text-indigo-600 mt-0.5">Allow viewers to choose which sheets to analyze</p>
+                          {showSheetSelector && (
+                            <>
+                              {!parameterExistence[PARAMS.show_sheet_selector] && (
+                                <div className="mt-2 flex items-start gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-300 rounded px-2 py-1">
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                  </svg>
+                                  <span>Parameter <code className="bg-amber-100 px-1">{PARAMS.show_sheet_selector}</code> not found to save visibility state</span>
+                                </div>
+                              )}
+                              {!parameterExistence[PARAMS.sheets] && (
+                                <div className="mt-2 flex items-start gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-300 rounded px-2 py-1">
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                  </svg>
+                                  <span>Parameter <code className="bg-amber-100 px-1">{PARAMS.sheets}</code> not found to save the value</span>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </label>
+                      
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showContextField}
+                          onChange={(e) => setShowContextField(e.target.checked)}
+                          className="mt-0.5 rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
+                        />
+                        <div className="flex-1">
+                          <span className="text-sm font-medium text-indigo-900">Show Business Context Field</span>
+                          <p className="text-xs text-indigo-600 mt-0.5">Allow viewers to add custom analysis context</p>
+                          {showContextField && (
+                            <>
+                              {!parameterExistence[PARAMS.show_context] && (
+                                <div className="mt-2 flex items-start gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-300 rounded px-2 py-1">
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                  </svg>
+                                  <span>Parameter <code className="bg-amber-100 px-1">{PARAMS.show_context}</code> not found to save visibility state</span>
+                                </div>
+                              )}
+                              {!parameterExistence[PARAMS.context] && (
+                                <div className="mt-2 flex items-start gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-300 rounded px-2 py-1">
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                  </svg>
+                                  <span>Parameter <code className="bg-amber-100 px-1">{PARAMS.context}</code> not found to save the value</span>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </label>
+                      
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showAutoRefreshToggle}
+                          onChange={(e) => setShowAutoRefreshToggle(e.target.checked)}
+                          className="mt-0.5 rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
+                        />
+                        <div className="flex-1">
+                          <span className="text-sm font-medium text-indigo-900">Show Auto-Refresh Toggle</span>
+                          <p className="text-xs text-indigo-600 mt-0.5">Allow viewers to enable/disable auto-refresh on filter changes</p>
+                          {showAutoRefreshToggle && (
+                            <>
+                              {!parameterExistence[PARAMS.show_auto_refresh] && (
+                                <div className="mt-2 flex items-start gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-300 rounded px-2 py-1">
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                  </svg>
+                                  <span>Parameter <code className="bg-amber-100 px-1">{PARAMS.show_auto_refresh}</code> not found to save visibility state</span>
+                                </div>
+                              )}
+                              {!parameterExistence[PARAMS.auto_refresh] && (
+                                <div className="mt-2 flex items-start gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-300 rounded px-2 py-1">
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                  </svg>
+                                  <span>Parameter <code className="bg-amber-100 px-1">{PARAMS.auto_refresh}</code> not found to save the value</span>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </label>
+                      
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showAutoGenerateToggle}
+                          onChange={(e) => setShowAutoGenerateToggle(e.target.checked)}
+                          className="mt-0.5 rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
+                        />
+                        <div className="flex-1">
+                          <span className="text-sm font-medium text-indigo-900">Show Auto-Generate Toggle</span>
+                          <p className="text-xs text-indigo-600 mt-0.5">Allow viewers to enable/disable auto-generate on dashboard load</p>
+                          {showAutoGenerateToggle && (
+                            <>
+                              {!parameterExistence[PARAMS.show_auto_generate] && (
+                                <div className="mt-2 flex items-start gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-300 rounded px-2 py-1">
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                  </svg>
+                                  <span>Parameter <code className="bg-amber-100 px-1">{PARAMS.show_auto_generate}</code> not found to save visibility state</span>
+                                </div>
+                              )}
+                              {!parameterExistence[PARAMS.auto_generate] && (
+                                <div className="mt-2 flex items-start gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-300 rounded px-2 py-1">
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                  </svg>
+                                  <span>Parameter <code className="bg-amber-100 px-1">{PARAMS.auto_generate}</code> not found to save the value</span>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </label>
+                      
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showChatTab}
+                          onChange={(e) => setShowChatTab(e.target.checked)}
+                          className="mt-0.5 rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
+                        />
+                        <div className="flex-1">
+                          <span className="text-sm font-medium text-indigo-900">Show Chat Tab</span>
+                          <p className="text-xs text-indigo-600 mt-0.5">Allow viewers to access interactive Q&A with data</p>
+                          {showChatTab && !parameterExistence[PARAMS.show_chat] && (
+                            <div className="mt-2 flex items-start gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-300 rounded px-2 py-1">
+                              <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
+                              <span>Parameter <code className="bg-amber-100 px-1">{PARAMS.show_chat}</code> not found to save visibility state</span>
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                      
+                      <div className="mt-4 pt-3 border-t border-indigo-200">
+                        <p className="text-xs text-indigo-600">
+                          💡 <strong>Tip:</strong> Use "Preview as Viewer" below to test the viewer experience with these settings.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* Preview as Viewer Toggle - Author Only */}
+              {serverInfo?.mode === 'authoring' && (
+                <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={previewAsViewer}
+                      onChange={(e) => setPreviewAsViewer(e.target.checked)}
+                      className="mt-0.5 rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-amber-900">Preview as Viewer</span>
+                        <svg className="w-4 h-4 text-amber-600" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                          <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/>
+                        </svg>
+                      </div>
+                      <p className="text-xs text-amber-700 mt-1">
+                        Test how viewers will see the dashboard. UI controls follow the visibility settings above.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              )}
+              
+              {/* Preferences - Auto-refresh and Auto-generate toggles */}
+              {mode === 'summary' && (
+                <div className="mb-4 space-y-3">
+                  {/* Auto-refresh toggle - Show to authors (unless previewing), or viewers if enabled via parameter */}
+                  {((serverInfo?.mode === 'authoring' && !previewAsViewer) || showAutoRefreshToggle) && (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoRefresh}
+                        onChange={(e) => setAutoRefresh(e.target.checked)}
+                        className="rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
+                      />
+                      <span className="text-sm text-gray-700">Auto-refresh on filter/parameter change</span>
+                    </label>
+                  )}
+                  
+                  {/* Auto-generate toggle - Show to authors (unless previewing), or viewers if enabled via parameter */}
+                  {((serverInfo?.mode === 'authoring' && !previewAsViewer) || showAutoGenerateToggle) && (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoGenerateOnLoad}
+                        onChange={(e) => setAutoGenerateOnLoad(e.target.checked)}
+                        className="rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
+                      />
+                      <span className="text-sm text-gray-700">Auto-generate summary on dashboard load</span>
+                    </label>
+                  )}
+                </div>
+              )}
+              
               <div className="space-y-4">
-                {/* Sheet Selector */}
+                {/* Sheet Selector - Show to authors (unless previewing), or viewers if enabled via parameter */}
+                {((serverInfo?.mode === 'authoring' && !previewAsViewer) || showSheetSelector) && (
                 <SheetSelector
                   sheets={sheets}
                   selectedSheets={selectedSheets}
                   onSelectionChange={setSelectedSheets}
                   disabled={!isInitialized || loading}
                 />
+                )}
 
-                {/* System Prompt - Author Only */}
-                {serverInfo?.mode === 'authoring' && (
+                {/* System Prompt - Author Only (hidden in preview mode) */}
+                {serverInfo?.mode === 'authoring' && !previewAsViewer && (
                   <div className="border-l-4 border-purple-500 bg-purple-50 p-4 rounded-r-lg">
                     <div className="flex items-start">
                       <svg className="w-5 h-5 text-purple-600 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
@@ -610,14 +1061,17 @@ function App() {
                   </div>
                 )}
 
-                {/* Context Input - Available to All Users */}
+                {/* Context Input - Show to authors (unless previewing), or viewers if enabled via parameter */}
+                {((serverInfo?.mode === 'authoring' && !previewAsViewer) || showContextField) && (
                 <ContextInput
                   context={context}
                   onContextChange={setContext}
                   disabled={loading}
                 />
+                )}
 
-                {/* Action Buttons */}
+                {/* Action Buttons - Show if user can configure something (sheets or context) */}
+                {((serverInfo?.mode === 'authoring' && !previewAsViewer) || showSheetSelector || showContextField) && (
                 <div className="flex gap-3 pt-2">
                   <button
                     onClick={handleGenerateSummary}
@@ -652,6 +1106,21 @@ function App() {
                     </button>
                   )}
                 </div>
+                )}
+                
+                {/* Custom View Tip - Show to viewers (or preview mode) when any controls are customizable */}
+                {(serverInfo?.mode !== 'authoring' || previewAsViewer) && (showSheetSelector || showContextField || showAutoRefreshToggle || showAutoGenerateToggle) && (
+                  <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <svg className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                      </svg>
+                      <p className="text-sm text-blue-800">
+                        <strong>💡 Tip:</strong> Save as Custom View to preserve your settings for next time.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -685,7 +1154,11 @@ function App() {
                   </svg>
                   <p className="text-lg font-medium text-gray-700 mb-2">No summary generated yet</p>
                   <p className="text-sm text-gray-500">
-                    Select one or more sheets and click "Generate Summary" to get AI-powered insights
+                    {((serverInfo?.mode === 'authoring' && !previewAsViewer) || showSheetSelector || showContextField) ? (
+                      <>Select one or more sheets and click "Generate Summary" to get AI-powered insights</>
+                    ) : (
+                      <>Summary will be generated automatically with the configured settings</>
+                    )}
                   </p>
                 </div>
               </div>

@@ -3,9 +3,17 @@ Prompt Templates for Tableau Summarizer
 Contains prompt building logic for Gemini AI summarization
 """
 
+import json
+from pathlib import Path
+
+# Load configuration
+config_path = Path(__file__).parent / 'config.json'
+with open(config_path, 'r') as f:
+    CONFIG = json.load(f)
+
 # Configuration
-DEFAULT_MAX_ROWS = 50
-DEFAULT_MAX_FIELDS = 15
+DEFAULT_MAX_ROWS = CONFIG['data_processing']['max_rows']
+DEFAULT_MAX_FIELDS = CONFIG['data_processing']['max_fields']
 
 
 def build_summarization_prompt(sheets_data, metadata, datasources, user_context, custom_system_prompt=None):

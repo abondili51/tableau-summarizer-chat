@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
 import os
+import json
+from pathlib import Path
 from datetime import datetime, timedelta
 import requests
 import xml.etree.ElementTree as ET
@@ -16,6 +18,11 @@ import urllib3
 
 # Disable SSL warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Load configuration
+config_path = Path(__file__).parent / 'config.json'
+with open(config_path, 'r') as f:
+    CONFIG = json.load(f)
 
 # Import prompt building functions
 from prompts import build_summarization_prompt
@@ -28,15 +35,15 @@ datasource_luid_cache = {}
 # Enable CORS for Tableau extension frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=CONFIG['server']['cors_origins'],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configure Vertex AI
+# Configure Vertex AI (allow environment variables to override)
 PROJECT_ID = os.environ.get('GOOGLE_CLOUD_PROJECT', '')
-LOCATION = os.environ.get('GOOGLE_CLOUD_LOCATION', 'us-central1')
+LOCATION = os.environ.get('GOOGLE_CLOUD_LOCATION', CONFIG['ai']['location'])
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 # Lazy initialization variables
@@ -184,11 +191,7 @@ async def summarize(request: SummarizeRequest):
         
         # Configure generation parameters for faster response
         # Lower values = faster, more focused output
-        generation_config = {
-            'temperature': 0.7,
-            'top_p': 0.8,
-            'top_k': 40
-        }
+        generation_config = CONFIG['ai']['generation_config']
         
         # Call Gemini via Vertex AI or direct API
         if vertex_ai_status:
@@ -198,7 +201,7 @@ async def summarize(request: SummarizeRequest):
             except ImportError:
                 from vertexai.preview.generative_models import GenerativeModel
             
-            model = GenerativeModel('gemini-2.5-flash')
+            model = GenerativeModel(CONFIG['ai']['model_name'])
             response = model.generate_content(
                 prompt,
                 generation_config=generation_config
@@ -207,7 +210,7 @@ async def summarize(request: SummarizeRequest):
         else:
             # Fallback to direct API with key
             import google.generativeai as genai
-            model = genai.GenerativeModel('gemini-2.5-flash')
+            model = genai.GenerativeModel(CONFIG['ai']['model_name'])
             response = model.generate_content(
                 prompt,
                 generation_config=generation_config
@@ -274,7 +277,8 @@ def get_tableau_api_version(server_url):
     """Get Tableau Server REST API version dynamically"""
     try:
         # Try to get server info to determine version
-        response = requests.get(f"{server_url}/api/3.0/serverinfo", verify=False, timeout=10)
+        timeout = CONFIG['tableau']['version_check_timeout_seconds']
+        response = requests.get(f"{server_url}/api/3.0/serverinfo", verify=False, timeout=timeout)
         if response.status_code == 200:
             root = ET.fromstring(response.content)
             ns = {'t': 'http://tableau.com/api'}
@@ -282,11 +286,13 @@ def get_tableau_api_version(server_url):
             if restapi_version is not None:
                 print(f"  Server API Version: {restapi_version.text}")
                 return restapi_version.text
-        print("  Could not determine version, using 3.24")
-        return "3.24"
+        default_version = CONFIG['tableau']['default_api_version']
+        print(f"  Could not determine version, using {default_version}")
+        return default_version
     except Exception as e:
-        print(f"  Version detection failed: {e}, using 3.24")
-        return "3.24"
+        default_version = CONFIG['tableau']['default_api_version']
+        print(f"  Version detection failed: {e}, using {default_version}")
+        return default_version
 
 def tableau_rest_signin(server_url, site_content_url, auth_method, pat_name=None, pat_secret=None, username=None, password=None):
     """Sign in to Tableau Server REST API"""
@@ -316,7 +322,7 @@ def tableau_rest_signin(server_url, site_content_url, auth_method, pat_name=None
         data=signin_xml.strip(),
         headers={'Content-Type': 'application/xml'},
         verify=False,
-        timeout=30
+        timeout=CONFIG['tableau']['api_timeout_seconds']
     )
     
     if response.status_code != 200:
@@ -373,7 +379,7 @@ def tableau_rest_get_datasource_luid(server_url, token, site_id, api_version, da
             'Content-Type': 'application/xml'
         },
         verify=False,
-        timeout=30
+        timeout=CONFIG['tableau']['api_timeout_seconds']
     )
     
     if response.status_code != 200:
@@ -405,7 +411,7 @@ def tableau_rest_signout(server_url, token, api_version):
             f"{server_url}/api/{api_version}/auth/signout",
             headers={'X-Tableau-Auth': token},
             verify=False,
-            timeout=10
+            timeout=CONFIG['tableau']['signout_timeout_seconds']
         )
     except:
         pass  # Best effort signout
@@ -424,8 +430,9 @@ async def get_datasource_luid(request: DatasourceLuidRequest):
             cached_data = datasource_luid_cache[cache_key]
             cache_age = datetime.now() - cached_data['timestamp']
             
-            # Cache valid for 4 hours
-            if cache_age < timedelta(hours=4):
+            # Cache valid for configured hours
+            cache_ttl = timedelta(hours=CONFIG['caching']['datasource_luid_ttl_hours'])
+            if cache_age < cache_ttl:
                 print(f"✓ Returning cached LUID for {request.datasource_name}")
                 return DatasourceLuidResponse(
                     success=True,
@@ -486,6 +493,6 @@ async def get_datasource_luid(request: DatasourceLuidRequest):
 
 if __name__ == '__main__':
     import uvicorn
-    port = int(os.environ.get('PORT', 8001))
+    port = int(os.environ.get('PORT', CONFIG['server']['port']))
     uvicorn.run(app, host='0.0.0.0', port=port)
 
