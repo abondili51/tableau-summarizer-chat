@@ -726,7 +726,34 @@ function App() {
         {/* Summary Mode */}
         <div style={{ display: mode === 'summary' ? 'block' : 'none' }}>
           <>
-            {/* Configuration Panel */}
+            {/* Preview as Viewer Toggle - Author Only - Always visible */}
+            {serverInfo?.mode === 'authoring' && (
+              <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={previewAsViewer}
+                    onChange={(e) => setPreviewAsViewer(e.target.checked)}
+                    className="mt-0.5 rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-amber-900">Preview as Viewer</span>
+                      <svg className="w-4 h-4 text-amber-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                        <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/>
+                      </svg>
+                    </div>
+                    <p className="text-xs text-amber-700 mt-1">
+                      Test how viewers will see the dashboard. UI controls follow the visibility settings below.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            )}
+
+            {/* Configuration Panel - Only show if there's something to configure */}
+            {((serverInfo?.mode === 'authoring' && !previewAsViewer) || showSheetSelector || showContextField || showAutoRefreshToggle || showAutoGenerateToggle) && (
             <div className="bg-white shadow-sm rounded-lg p-6 mb-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-gray-900">Configuration</h2>
@@ -935,37 +962,11 @@ function App() {
                       
                       <div className="mt-4 pt-3 border-t border-indigo-200">
                         <p className="text-xs text-indigo-600">
-                          💡 <strong>Tip:</strong> Use "Preview as Viewer" below to test the viewer experience with these settings.
+                          💡 <strong>Tip:</strong> Use "Preview as Viewer" above to test the viewer experience with these settings.
                         </p>
                       </div>
                     </div>
                   )}
-                </div>
-              )}
-              
-              {/* Preview as Viewer Toggle - Author Only */}
-              {serverInfo?.mode === 'authoring' && (
-                <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  <label className="flex items-start gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={previewAsViewer}
-                      onChange={(e) => setPreviewAsViewer(e.target.checked)}
-                      className="mt-0.5 rounded border-gray-300 text-tableau-blue focus:ring-tableau-blue"
-                    />
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-amber-900">Preview as Viewer</span>
-                        <svg className="w-4 h-4 text-amber-600" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
-                          <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/>
-                        </svg>
-                      </div>
-                      <p className="text-xs text-amber-700 mt-1">
-                        Test how viewers will see the dashboard. UI controls follow the visibility settings above.
-                      </p>
-                    </div>
-                  </label>
                 </div>
               )}
               
@@ -1123,6 +1124,7 @@ function App() {
                 )}
               </div>
             </div>
+            )}
 
             {/* Summary Display */}
             {summary && (
